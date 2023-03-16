@@ -240,12 +240,18 @@ process_update_request(ConfKeyPath, _Handlers, {remove, Opts}) ->
     end;
 process_update_request(ConfKeyPath, Handlers, {{update, UpdateReq}, Opts}) ->
     OldRawConf = emqx_config:get_root_raw(ConfKeyPath),
+    io:format("udpate: ~p ~p~n", [ConfKeyPath, OldRawConf]),
     case do_update_config(ConfKeyPath, Handlers, OldRawConf, UpdateReq) of
         {ok, NewRawConf} ->
             BinKeyPath = bin_path(ConfKeyPath),
             case check_permissions(update, BinKeyPath, NewRawConf, Opts) of
                 allow ->
+                    io:format("zhongwen:NewRawConf: ~p ~p~n", [BinKeyPath, NewRawConf]),
+                    %Init = emqx_map_lib:deep_put(BinKeyPath, #{}, #{}),
+                    %Default = emqx_config:fill_defaults(Init),
+                    %NewRawConf1 = emqx_config:remove_default_conf(NewRawConf, Default),
                     OverrideConf = merge_to_override_config(NewRawConf, Opts),
+                    io:format("zhongwen2:OverrideConf: ~p~n", [OverrideConf]),
                     {ok, NewRawConf, OverrideConf, Opts};
                 {deny, Reason} ->
                     {error, {permission_denied, Reason}}
@@ -266,13 +272,17 @@ do_update_config(
     UpdateReq,
     ConfKeyPath0
 ) ->
+    io:format("do_update_conf:~p~n", [{[ConfKey|SubConfKeyPath], OldRawConf, UpdateReq, ConfKeyPath0}]),
     ConfKeyPath = ConfKeyPath0 ++ [ConfKey],
     ConfKeyBin = bin(ConfKey),
     SubOldRawConf = get_sub_config(ConfKeyBin, OldRawConf),
     SubHandlers = get_sub_handlers(ConfKey, Handlers),
     case do_update_config(SubConfKeyPath, SubHandlers, SubOldRawConf, UpdateReq, ConfKeyPath) of
-        {ok, NewUpdateReq} -> merge_to_old_config(#{ConfKeyBin => NewUpdateReq}, OldRawConf);
-        Error -> Error
+        {ok, NewUpdateReq} ->
+            io:format("do_update_conf2:~p~n", [NewUpdateReq]),
+            merge_to_old_config(#{ConfKeyBin => NewUpdateReq}, OldRawConf);
+        Error ->
+            Error
     end.
 
 check_and_save_configs(
@@ -285,14 +295,19 @@ check_and_save_configs(
     Opts
 ) ->
     Schema = schema(SchemaModule, ConfKeyPath),
+    io:format("111:~p ~p ~n", [Schema, NewRawConf]),
     {AppEnvs, NewConf} = emqx_config:check_config(Schema, NewRawConf),
     OldConf = emqx_config:get_root(ConfKeyPath),
+    io:format("222:~p ~p ~n", [NewConf, OldConf]),
     case do_post_config_update(ConfKeyPath, Handlers, OldConf, NewConf, AppEnvs, UpdateArgs, #{}) of
         {ok, Result0} ->
-            ok = emqx_config:save_configs(AppEnvs, NewConf, NewRawConf, OverrideConf, Opts),
+            ok = emqx_config:save_configs(
+                ConfKeyPath, AppEnvs, NewConf, NewRawConf, OverrideConf, Opts
+            ),
             Result1 = return_change_result(ConfKeyPath, UpdateArgs),
             {ok, Result1#{post_config_update => Result0}};
         Error ->
+            io:format("333:post_config_update:~p~n", [Error]),
             Error
     end.
 

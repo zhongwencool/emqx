@@ -24,17 +24,18 @@
     init_load/2,
     init_load/3,
     read_override_conf/1,
-    read_override_confs/0,
     delete_override_conf_files/0,
     check_config/2,
     fill_defaults/1,
     fill_defaults/2,
     fill_defaults/3,
-    save_configs/5,
+    save_configs/6,
     save_to_app_env/1,
     save_to_config_map/2,
     save_to_override_conf/2
 ]).
+-export([raw_conf_with_default/4]).
+-export([remove_default_conf/2]).
 
 -export([
     get_root/1,
@@ -324,23 +325,22 @@ init_load(SchemaMod, ConfFiles) ->
 init_load(SchemaMod, Conf, Opts) when is_list(Conf) orelse is_binary(Conf) ->
     init_load(SchemaMod, parse_hocon(Conf), Opts);
 init_load(SchemaMod, RawConf, Opts) when is_map(RawConf) ->
+    %% merge cluster-override.conf to local-override.conf
+    %% cluster-override.conf is deprecated, now is cluster.conf
+    merge_deprecated_cluster_override_to_local_override(),
     ok = save_schema_mod_and_names(SchemaMod),
+    RootNames = get_root_names(),
     %% Merge environment variable overrides on top
     RawConfWithEnvs = merge_envs(SchemaMod, RawConf),
-    Overrides = read_override_confs(),
-    RawConfWithOverrides = hocon:deep_merge(RawConfWithEnvs, Overrides),
-    RootNames = get_root_names(),
+    ClusterOverrides = read_override_conf(#{override_to => cluster}),
+    LocalOverrides = read_override_conf(#{override_to => local}),
+    RawConfWithCluster = hocon:deep_merge(ClusterOverrides, RawConfWithEnvs),
+    RawConfWithOverrides = hocon:deep_merge(RawConfWithCluster, LocalOverrides),
     RawConfAll = raw_conf_with_default(SchemaMod, RootNames, RawConfWithOverrides, Opts),
     %% check configs against the schema
     {AppEnvs, CheckedConf} = check_config(SchemaMod, RawConfAll, #{}),
     save_to_app_env(AppEnvs),
     ok = save_to_config_map(CheckedConf, RawConfAll).
-
-%% @doc Read merged cluster + local overrides.
-read_override_confs() ->
-    ClusterOverrides = read_override_conf(#{override_to => cluster}),
-    LocalOverrides = read_override_conf(#{override_to => local}),
-    hocon:deep_merge(ClusterOverrides, LocalOverrides).
 
 %% keep the raw and non-raw conf has the same keys to make update raw conf easier.
 raw_conf_with_default(SchemaMod, RootNames, RawConf, #{raw_with_default := true}) ->
@@ -479,6 +479,13 @@ read_override_conf(#{} = Opts) ->
     File = override_conf_file(Opts),
     load_hocon_file(File, map).
 
+read_deprecated_override_conf() ->
+    ClusterFile = override_conf_file(#{override_to => cluster}),
+    DeprecatedFile = filename:join(filename:dirname(ClusterFile), "cluster-override.conf"),
+    Conf = load_hocon_file(DeprecatedFile, map),
+    _ = file:delete(DeprecatedFile),
+    Conf.
+
 override_conf_file(Opts) when is_map(Opts) ->
     Key =
         case maps:get(override_to, Opts, cluster) of
@@ -513,13 +520,64 @@ get_schema_mod(RootName) ->
 get_root_names() ->
     maps:get(names, persistent_term:get(?PERSIS_SCHEMA_MODS, #{names => []})).
 
--spec save_configs(app_envs(), config(), raw_config(), raw_config(), update_opts()) -> ok.
-save_configs(AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
+-spec save_configs(
+    emqx_map_lib:config_key_path(), app_envs(), config(), raw_config(), raw_config(), update_opts()
+) -> ok.
+save_configs(Paths0, AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
     %% We first try to save to override.conf, because saving to files is more error prone
     %% than saving into memory.
-    ok = save_to_override_conf(OverrideConf, Opts),
+    %% todo log default [log,console_handler,file_handler,default]
+    Paths = [Root | _] = [bin(Key) || Key <- Paths0],
+    io:format("11:~p ~p~n", [Paths, Paths0]),
+    SchemaMod = get_schema_mod(Root),
+    io:format("22~p~n",[SchemaMod]),
+    {_, {_, Schema}} = lists:keyfind(Root, 1, hocon_schema:roots(SchemaMod)),
+    SchemaDefault = schema_default(Schema),
+    Init = emqx_map_lib:deep_put(Paths, #{}, SchemaDefault),
+    io:format("save22:~p~n" ,[Init]),
+    Default = fill_defaults(Init),
+    io:format("save33:~p~n~n", [Default]),
+    io:format("save:~p~n", [Default]),
+    OverrideConf1 = remove_default_conf(OverrideConf, Default),
+    io:format("save2:~p~n", [{OverrideConf, OverrideConf1}]),
+    RawConf1 = remove_default_conf(RawConf, Default),
+    io:format("save3:~p~n", [{RawConf1, RawConf}]),
+    io:format("init:~p~n", [Init]),
+    io:format("default:~p~n", [Default]),
+    io:format("override:~p~n", [OverrideConf1]),
+    io:format("rawconf:~p~n", [RawConf1]),
+    ok = save_to_override_conf(OverrideConf1, Opts),
     save_to_app_env(AppEnvs),
-    save_to_config_map(Conf, RawConf).
+    save_to_config_map(Conf, RawConf1).
+
+remove_default_conf(Conf, Default) ->
+    {NewConf, _} =
+        maps:fold(
+            fun(Key, Value, {ConfAcc, DefaultAcc}) ->
+                case maps:find(Key, DefaultAcc) of
+                    {ok, Value} ->
+                        {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
+                    {ok, DefaultValue} when is_map(DefaultValue) ->
+                        case is_map(Value) of
+                            true ->
+                                SubValue = remove_default_conf(Value, DefaultValue),
+                                {maps:put(Key, SubValue, ConfAcc), maps:remove(Key, DefaultAcc)};
+                            false ->
+                                {ConfAcc, DefaultAcc}
+                        end;
+                    {ok, DefaultValue} ->
+                        case bin(DefaultValue) =:= bin(Value) of
+                            true -> {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
+                            false -> {ConfAcc, DefaultAcc}
+                        end;
+                    error ->
+                        {ConfAcc, DefaultAcc}
+                end
+            end,
+            {Conf, Default},
+            Conf
+        ),
+    NewConf.
 
 %% we ignore kernel app env,
 %% because the old app env will be used in emqx_config_logger:post_config_update/5
@@ -670,8 +728,13 @@ atom(Atom) when is_atom(Atom) ->
     Atom.
 
 bin(Bin) when is_binary(Bin) -> Bin;
+bin([Bin | _] = List) when is_binary(Bin) -> List;
+bin([Atom | _] = List) when is_atom(Atom) -> [atom_to_binary(A) || A <- List];
+bin([Map | _ ] = Maps) when is_map(Map) -> Maps;
 bin(Str) when is_list(Str) -> list_to_binary(Str);
-bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8).
+bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
+bin(Int) when is_integer(Int) -> integer_to_binary(Int);
+bin(Float) when is_float(Float) -> float_to_binary(Float).
 
 conf_key(?CONF, RootName) ->
     atom(RootName);
@@ -690,3 +753,9 @@ atom_conf_path(Path, ExpFun, OnFail) ->
                     error(Err)
             end
     end.
+
+merge_deprecated_cluster_override_to_local_override() ->
+    LocalOverrides = read_override_conf(#{override_to => local}),
+    Conf = read_deprecated_override_conf(),
+    RawConf = hocon:deep_merge(LocalOverrides, Conf),
+    save_to_override_conf(RawConf, #{override_to => local}).
