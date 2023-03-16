@@ -34,23 +34,14 @@ remove_handler() ->
 
 %% refresh logger config when booting, the override config may have changed after node start.
 %% Kernel's app env is confirmed before the node starts,
-%% but we only copy cluster-override.conf from other node after this node starts,
+%% but we only copy cluster.conf from other node after this node starts,
 %% so we need to refresh the logger config after this node starts.
-%% It will not affect the logger config when cluster-override.conf is unchanged.
+%% It will not affect the logger config when cluster.conf is unchanged.
 refresh_config() ->
-    Overrides = emqx_config:read_override_confs(),
-    refresh_config(Overrides).
-
-refresh_config(#{<<"log">> := _}) ->
     %% read the checked config
     LogConfig = emqx:get_config(?LOG, undefined),
     Conf = #{log => LogConfig},
-    ok = do_refresh_config(Conf);
-refresh_config(_) ->
-    %% No config override found for 'log', do nothing
-    %% because the 'kernel' app should already be configured
-    %% from the base configs. i.e. emqx.conf + env vars
-    ok.
+    ok = do_refresh_config(Conf).
 
 %% this call is shared between initial config refresh at boot
 %% and dynamic config update from HTTP API

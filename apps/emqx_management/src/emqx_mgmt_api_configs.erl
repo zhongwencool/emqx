@@ -213,12 +213,11 @@ fields(Field) ->
 %%%==============================================================================================
 %% HTTP API Callbacks
 config(get, _Params, Req) ->
+    [Path] = conf_path(Req),
+    {200, get_raw_config(Path)};
+config(put, #{body := NewConf}, Req) ->
     Path = conf_path(Req),
-    {ok, Conf} = emqx_map_lib:deep_find(Path, get_full_config()),
-    {200, Conf};
-config(put, #{body := Body}, Req) ->
-    Path = conf_path(Req),
-    case emqx_conf:update(Path, Body, ?OPTS) of
+    case emqx_conf:update([Path], NewConf, ?OPTS) of
         {ok, #{raw_config := RawConf}} ->
             {200, RawConf};
         {error, {permission_denied, Reason}} ->
@@ -228,28 +227,29 @@ config(put, #{body := Body}, Req) ->
     end.
 
 global_zone_configs(get, _Params, _Req) ->
-    Paths = global_zone_roots(),
-    Zones = lists:foldl(
-        fun(Path, Acc) -> maps:merge(Acc, get_config_with_default(Path)) end,
-        #{},
-        Paths
-    ),
-    {200, Zones};
+    {200, get_zones()};
 global_zone_configs(put, #{body := Body}, _Req) ->
+    PrevZones = get_zones(),
     Res =
         maps:fold(
             fun(Path, Value, Acc) ->
-                case emqx_conf:update([Path], Value, ?OPTS) of
-                    {ok, #{raw_config := RawConf}} ->
-                        Acc#{Path => RawConf};
-                    {error, Reason} ->
-                        ?SLOG(error, #{
-                            msg => "update global zone failed",
-                            reason => Reason,
-                            path => Path,
-                            value => Value
-                        }),
-                        Acc
+                PrevValue = maps:get(Path, PrevZones),
+                case Value =/= PrevValue of
+                    true ->
+                        case emqx_conf:update([Path], Value, ?OPTS) of
+                            {ok, #{raw_config := RawConf}} ->
+                                Acc#{Path => RawConf};
+                            {error, Reason} ->
+                                ?SLOG(error, #{
+                                    msg => "update global zone failed",
+                                    reason => Reason,
+                                    path => Path,
+                                    value => Value
+                                }),
+                                Acc
+                        end;
+                    false ->
+                        Acc#{Path => Value}
                 end
             end,
             #{},
@@ -302,6 +302,23 @@ get_full_config() ->
             emqx:get_raw_config([])
         ),
         #{obfuscate_sensitive_values => true}
+    ).
+
+get_raw_config(Path) ->
+    #{Path := Conf} =
+        emqx_config:fill_defaults(
+            #{Path => emqx:get_raw_config([Path])},
+            #{obfuscate_sensitive_values => true}
+        ),
+    Conf.
+
+get_zones() ->
+    lists:foldl(
+        fun(Path, Acc) ->
+            maps:merge(Acc, get_config_with_default(Path))
+        end,
+        #{},
+        global_zone_roots()
     ).
 
 get_config_with_default(Path) ->
