@@ -52,10 +52,9 @@ do_refresh_config(Conf) ->
     ok = maybe_update_log_level(Level),
     ok.
 
-post_config_update(?LOG, _Req, NewConf, _OldConf, _AppEnvs) ->
-    ok = do_refresh_config(#{log => NewConf});
-post_config_update(_ConfPath, _Req, _NewConf, _OldConf, _AppEnvs) ->
-    ok.
+%% always refresh config when the override config is changed
+post_config_update(_Paths, _Req, NewConf, _OldConf, _AppEnvs) ->
+    ok = do_refresh_config(#{log => NewConf}).
 
 maybe_update_log_level(NewLevel) ->
     OldLevel = emqx_logger:get_primary_log_level(),

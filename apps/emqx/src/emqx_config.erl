@@ -35,7 +35,7 @@
     save_to_override_conf/2
 ]).
 -export([raw_conf_with_default/4]).
--export([remove_default_conf/2]).
+-export([remove_default_conf/2, remove_default_conf_test/0]).
 
 -export([
     get_root/1,
@@ -757,3 +757,65 @@ merge_deprecated_cluster_override_to_local_override() ->
     Conf = read_deprecated_override_conf(),
     RawConf = hocon:deep_merge(LocalOverrides, Conf),
     save_to_override_conf(RawConf, #{override_to => local}).
+
+%-ifdef(TEST).
+%-include_lib("eunit/include/eunit.hrl").
+
+remove_default_conf_test() ->
+    X = remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => 100}),
+    io:format("X1: ~p~n", [X]),
+    X1 = remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => <<"100">>}),
+    io:format("X2: ~p~n", [X1]),
+    X2 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
+        <<"def">> => #{<<"abc">> => 100, <<"edf">> => 123}
+    }),
+    io:format("X3: ~p~n", [X2]),
+    X3 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
+        <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => 321}
+    }),
+    io:format("X4: ~p~n", [X3]),
+    X4 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => <<"true">>}}, #{
+        <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => true}
+    }),
+    io:format("X4: ~p~n", [X4]),
+    X5 = remove_default_conf(
+        #{
+            <<"bytes_in">> =>
+                #{
+                    <<"capacity">> => infinity,
+                    <<"initial">> => 0,
+                    <<"rate">> => infinity
+                }
+        },
+        #{
+            <<"bytes_in">> =>
+                #{
+                    <<"capacity">> => <<"infinity">>,
+                    <<"initial">> => <<"0">>,
+                    <<"rate">> => <<"infinity">>
+                }
+        }
+    ),
+    io:format("X5: ~p~n", [X5]),
+    X6 = remove_default_conf(
+        #{
+            <<"limiter">> => #{
+                <<"connection">> =>
+                    #{<<"capacity">> => 1000, <<"initial">> => <<"0">>, <<"rate">> => <<"1000/s">>}
+            }
+        },
+        #{
+            <<"limiter">> => #{
+                <<"connection">> =>
+                    #{
+                        <<"capacity">> => <<"1000">>,
+                        <<"initial">> => <<"0">>,
+                        <<"rate">> => <<"1000/s">>
+                    }
+            }
+        }
+    ),
+    io:format("X6: ~p~n", [X6]),
+    ok.
+
+%-endif.
