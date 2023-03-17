@@ -35,6 +35,7 @@
     save_to_override_conf/2
 ]).
 -export([raw_conf_with_default/4]).
+-export([remove_default_conf/2]).
 
 -export([
     get_root/1,
@@ -324,7 +325,7 @@ init_load(SchemaMod, ConfFiles) ->
 init_load(SchemaMod, Conf, Opts) when is_list(Conf) orelse is_binary(Conf) ->
     init_load(SchemaMod, parse_hocon(Conf), Opts);
 init_load(SchemaMod, RawConf, Opts) when is_map(RawConf) ->
-    %% todo merge cluster-override.conf to local-override.conf
+    %% merge cluster-override.conf to local-override.conf
     %% cluster-override.conf is deprecated, now is cluster.conf
     merge_deprecated_cluster_override_to_local_override(),
     ok = save_schema_mod_and_names(SchemaMod),
@@ -522,18 +523,22 @@ get_root_names() ->
 -spec save_configs(
     emqx_map_lib:config_key_path(), app_envs(), config(), raw_config(), raw_config(), update_opts()
 ) -> ok.
-save_configs(Paths, AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
+
+save_configs(Paths0, AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
     %% We first try to save to override.conf, because saving to files is more error prone
     %% than saving into memory.
-    Init = emqx_map_lib:deep_put([bin(Key) || Key <- Paths], #{}, #{}),
-    Default = emqx_config:fill_defaults(Init),
+    %% todo log default [log,console_handler,file_handler,default]
+    Paths = [Root | _] = [bin(Key) || Key <- Paths0],
+    SchemaMod = get_schema_mod(Root),
+    {_, {_, Schema}} = lists:keyfind(Root, 1, hocon_schema:roots(SchemaMod)),
+    SchemaDefault = schema_default(Schema),
+    Init = emqx_map_lib:deep_put(Paths, #{}, SchemaDefault),
+    Default = fill_defaults(Init),
     OverrideConf1 = remove_default_conf(OverrideConf, Default),
-    io:format("init:~p~n", [Init]),
-    io:format("default:~p~n", [Default]),
-    io:format("override:~p~n", [OverrideConf1]),
+    RawConf1 = remove_default_conf(RawConf, Default),
     ok = save_to_override_conf(OverrideConf1, Opts),
     save_to_app_env(AppEnvs),
-    save_to_config_map(Conf, RawConf).
+    save_to_config_map(Conf, RawConf1).
 
 remove_default_conf(Conf, Default) ->
     {NewConf, _} =
@@ -546,7 +551,15 @@ remove_default_conf(Conf, Default) ->
                         case is_map(Value) of
                             true ->
                                 SubValue = remove_default_conf(Value, DefaultValue),
-                                {maps:put(Key, SubValue, ConfAcc), maps:remove(Key, DefaultAcc)};
+                                case SubValue =:= #{} of
+                                    true ->
+                                        {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
+                                    false ->
+                                        {
+                                            maps:put(Key, SubValue, ConfAcc),
+                                            maps:remove(Key, DefaultAcc)
+                                        }
+                                end;
                             false ->
                                 {ConfAcc, DefaultAcc}
                         end;
@@ -715,6 +728,7 @@ atom(Atom) when is_atom(Atom) ->
 bin(Bin) when is_binary(Bin) -> Bin;
 bin([Bin | _] = List) when is_binary(Bin) -> List;
 bin([Atom | _] = List) when is_atom(Atom) -> [atom_to_binary(A) || A <- List];
+bin([Map | _] = Maps) when is_map(Map) -> Maps;
 bin(Str) when is_list(Str) -> list_to_binary(Str);
 bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 bin(Int) when is_integer(Int) -> integer_to_binary(Int);

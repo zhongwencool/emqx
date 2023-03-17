@@ -217,7 +217,7 @@ config(get, _Params, Req) ->
     {200, get_raw_config(Path)};
 config(put, #{body := NewConf}, Req) ->
     Path = conf_path(Req),
-    case emqx_conf:update([Path], NewConf, ?OPTS) of
+    case emqx_conf:update(Path, NewConf, ?OPTS) of
         {ok, #{raw_config := RawConf}} ->
             {200, RawConf};
         {error, {permission_denied, Reason}} ->
