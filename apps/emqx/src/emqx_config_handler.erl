@@ -287,10 +287,8 @@ check_and_save_configs(
     Opts
 ) ->
     Schema = schema(SchemaModule, ConfKeyPath),
-    io:format("111:~p ~p ~n", [Schema, NewRawConf]),
     {AppEnvs, NewConf} = emqx_config:check_config(Schema, NewRawConf),
     OldConf = emqx_config:get_root(ConfKeyPath),
-    io:format("222:~p ~p ~n", [NewConf, OldConf]),
     case do_post_config_update(ConfKeyPath, Handlers, OldConf, NewConf, AppEnvs, UpdateArgs, #{}) of
         {ok, Result0} ->
             ok = emqx_config:save_configs(
@@ -299,7 +297,6 @@ check_and_save_configs(
             Result1 = return_change_result(ConfKeyPath, UpdateArgs),
             {ok, Result1#{post_config_update => Result0}};
         Error ->
-            io:format("333:post_config_update:~p~n", [Error]),
             Error
     end.
 

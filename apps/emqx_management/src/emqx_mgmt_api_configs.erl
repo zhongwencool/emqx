@@ -37,37 +37,17 @@
 -define(OPTS, #{rawconf_with_defaults => true, override_to => cluster}).
 -define(TAGS, ["Configs"]).
 
--define(EXCLUDES,
-    [
-        <<"exhook">>,
-        <<"gateway">>,
-        <<"plugins">>,
-        <<"bridges">>,
-        <<"rule_engine">>,
-        <<"authorization">>,
-        <<"authentication">>,
-        <<"rpc">>,
-        <<"connectors">>,
-        <<"slow_subs">>,
-        <<"psk_authentication">>,
-        <<"topic_metrics">>,
-        <<"rewrite">>,
-        <<"auto_subscribe">>,
-        <<"retainer">>,
-        <<"statsd">>,
-        <<"delayed">>,
-        <<"event_message">>,
-        <<"prometheus">>,
-        <<"telemetry">>,
-        <<"listeners">>,
-        <<"license">>,
-        <<"api_key">>,
-        <<"cluster">>,
-        <<"node">>,
-        <<"zones">>,
-        <<"broker">>
-    ] ++ global_zone_roots()
-).
+-define(ROOT_KEYS, [
+    <<"dashboard">>,
+    <<"alarm">>,
+    <<"sys_topics">>,
+    <<"sysmon">>,
+    <<"limiter">>,
+    <<"trace">>,
+    <<"log">>,
+    <<"persistent_session_store">>,
+    <<"zones">>
+]).
 
 api_spec() ->
     emqx_dashboard_swagger:spec(?MODULE, #{check_schema => true}).
@@ -219,11 +199,8 @@ config(get, _Params, Req) ->
     {200, get_raw_config(Path)};
 config(put, #{body := NewConf}, Req) ->
     Path = conf_path(Req),
-    Console = maps:get(<<"console_handler">>, NewConf, #{}),
-    case emqx_conf:update(Path ++ [<<"console_handlers">>], Console, ?OPTS) of
+    case emqx_conf:update(Path, NewConf, ?OPTS) of
         {ok, #{raw_config := RawConf}} ->
-            File = maps:get(<<"file_handlers">>, NewConf, #{}),
-            _ = emqx_conf:update(Path ++ [<<"file_handlers">>], File, ?OPTS),
             {200, RawConf};
         {error, {permission_denied, Reason}} ->
             {403, #{code => 'UPDATE_FAILED', message => Reason}};
@@ -302,8 +279,8 @@ conf_path_reset(Req) ->
 
 get_full_config() ->
     emqx_config:fill_defaults(
-        maps:without(
-            ?EXCLUDES,
+        maps:with(
+            ?ROOT_KEYS,
             emqx:get_raw_config([])
         ),
         #{obfuscate_sensitive_values => true}
@@ -338,7 +315,7 @@ conf_path_from_querystr(Req) ->
 config_list() ->
     Mod = emqx_conf:schema_module(),
     Roots = hocon_schema:roots(Mod),
-    lists:foldl(fun(Key, Acc) -> lists:keydelete(Key, 1, Acc) end, Roots, ?EXCLUDES).
+    lists:foldl(fun(Key, Acc) -> [lists:keyfind(Key, 1, Roots) | Acc] end, [], ?ROOT_KEYS).
 
 conf_path(Req) ->
     <<"/api/v5", ?PREFIX, Path/binary>> = cowboy_req:path(Req),

@@ -329,9 +329,9 @@ init_load(SchemaMod, ConfFiles) ->
 init_load(SchemaMod, Conf, Opts) when is_list(Conf) orelse is_binary(Conf) ->
     init_load(SchemaMod, parse_hocon(Conf), Opts);
 init_load(SchemaMod, RawConf, Opts) when is_map(RawConf) ->
+    merge_deprecated_cluster_override_to_local_override(),
     %% merge cluster-override.conf to local-override.conf
     %% cluster-override.conf is deprecated, now is cluster.conf
-    merge_deprecated_cluster_override_to_local_override(),
     ok = save_schema_mod_and_names(SchemaMod),
     RootNames = get_root_names(),
     %% Merge environment variable overrides on top
@@ -757,10 +757,15 @@ atom_conf_path(Path, ExpFun, OnFail) ->
     end.
 
 merge_deprecated_cluster_override_to_local_override() ->
-    LocalOverrides = read_override_conf(#{override_to => local}),
-    Conf = read_deprecated_override_conf(),
-    RawConf = hocon:deep_merge(LocalOverrides, Conf),
-    save_to_override_conf(RawConf, #{override_to => local}).
+    case read_deprecated_override_conf() of
+        undefined ->
+            ok;
+        DeprecatedConf ->
+            LocalOverrides = read_override_conf(#{override_to => local}),
+            MergedConf = hocon:deep_merge(LocalOverrides, DeprecatedConf),
+            save_to_override_conf(MergedConf, #{override_to => local}),
+            ok
+    end.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
