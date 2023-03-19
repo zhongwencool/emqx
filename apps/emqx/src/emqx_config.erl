@@ -35,7 +35,7 @@
     save_to_override_conf/2
 ]).
 -export([raw_conf_with_default/4]).
--export([remove_default_conf/2, remove_default_conf_test/0]).
+-export([remove_default_conf/2]).
 
 -export([
     get_root/1,
@@ -549,42 +549,32 @@ save_configs(Paths0, AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
     save_to_app_env(AppEnvs),
     save_to_config_map(Conf, RawConf1).
 
-remove_default_conf(Conf, Default) ->
-    {NewConf, _} =
-        maps:fold(
-            fun(Key, Value, {ConfAcc, DefaultAcc}) ->
-                case maps:find(Key, DefaultAcc) of
-                    {ok, Value} ->
-                        {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
-                    {ok, DefaultValue} when is_map(DefaultValue) ->
-                        case is_map(Value) of
-                            true ->
-                                SubValue = remove_default_conf(Value, DefaultValue),
-                                case SubValue =:= #{} of
-                                    true ->
-                                        {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
-                                    false ->
-                                        {
-                                            maps:put(Key, SubValue, ConfAcc),
-                                            maps:remove(Key, DefaultAcc)
-                                        }
-                                end;
-                            false ->
-                                {ConfAcc, DefaultAcc}
-                        end;
-                    {ok, DefaultValue} ->
-                        case bin(DefaultValue) =:= bin(Value) of
-                            true -> {maps:remove(Key, ConfAcc), maps:remove(Key, DefaultAcc)};
-                            false -> {ConfAcc, DefaultAcc}
-                        end;
-                    error ->
-                        {ConfAcc, DefaultAcc}
-                end
-            end,
-            {Conf, Default},
-            Conf
-        ),
-    NewConf.
+remove_default_conf(Conf, DefaultConf) when is_map(Conf) andalso is_map(DefaultConf) ->
+    maps:fold(
+        fun(Key, Value, Acc) ->
+            case maps:find(Key, DefaultConf) of
+                {ok, DefaultValue} ->
+                    remove_default_conf(Value, DefaultValue, Key, Acc);
+                error ->
+                    Acc
+            end
+        end,
+        Conf,
+        Conf
+    ).
+
+remove_default_conf(Value, Value, Key, Conf) ->
+    maps:remove(Key, Conf);
+remove_default_conf(Value = #{}, DefaultValue = #{}, Key, Conf) ->
+    case remove_default_conf(Value, DefaultValue) of
+        SubValue when SubValue =:= #{} -> maps:remove(Key, Conf);
+        SubValue -> maps:put(Key, SubValue, Conf)
+    end;
+remove_default_conf(Value, DefaultValue, Key, Conf) ->
+    case try_bin(DefaultValue) =:= try_bin(Value) of
+        true -> maps:remove(Key, Conf);
+        false -> Conf
+    end.
 
 %% we ignore kernel app env,
 %% because the old app env will be used in emqx_config_logger:post_config_update/5
@@ -734,14 +724,19 @@ atom(Str) when is_list(Str) ->
 atom(Atom) when is_atom(Atom) ->
     Atom.
 
+try_bin(Bin) when is_binary(Bin) -> Bin;
+try_bin([Bin | _] = List) when is_binary(Bin) -> List;
+try_bin([Atom | _] = List) when is_atom(Atom) -> [atom_to_binary(A) || A <- List];
+try_bin([Map | _] = Maps) when is_map(Map) -> Maps;
+try_bin(Str) when is_list(Str) -> list_to_binary(Str);
+try_bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
+try_bin(Int) when is_integer(Int) -> integer_to_binary(Int);
+try_bin(Float) when is_float(Float) -> float_to_binary(Float);
+try_bin(Term) -> Term.
+
 bin(Bin) when is_binary(Bin) -> Bin;
-bin([Bin | _] = List) when is_binary(Bin) -> List;
-bin([Atom | _] = List) when is_atom(Atom) -> [atom_to_binary(A) || A <- List];
-bin([Map | _] = Maps) when is_map(Map) -> Maps;
 bin(Str) when is_list(Str) -> list_to_binary(Str);
-bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
-bin(Int) when is_integer(Int) -> integer_to_binary(Int);
-bin(Float) when is_float(Float) -> float_to_binary(Float).
+bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8).
 
 conf_key(?CONF, RootName) ->
     atom(RootName);
@@ -767,64 +762,86 @@ merge_deprecated_cluster_override_to_local_override() ->
     RawConf = hocon:deep_merge(LocalOverrides, Conf),
     save_to_override_conf(RawConf, #{override_to => local}).
 
-%-ifdef(TEST).
-%-include_lib("eunit/include/eunit.hrl").
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 remove_default_conf_test() ->
-    X = remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => 100}),
-    io:format("X1: ~p~n", [X]),
-    X1 = remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => <<"100">>}),
-    io:format("X2: ~p~n", [X1]),
-    X2 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
-        <<"def">> => #{<<"abc">> => 100, <<"edf">> => 123}
-    }),
-    io:format("X3: ~p~n", [X2]),
-    X3 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
-        <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => 321}
-    }),
-    io:format("X4: ~p~n", [X3]),
-    X4 = remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => <<"true">>}}, #{
-        <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => true}
-    }),
-    io:format("X4: ~p~n", [X4]),
-    X5 = remove_default_conf(
-        #{
-            <<"bytes_in">> =>
-                #{
-                    <<"capacity">> => infinity,
-                    <<"initial">> => 0,
-                    <<"rate">> => infinity
-                }
-        },
-        #{
-            <<"bytes_in">> =>
-                #{
-                    <<"capacity">> => <<"infinity">>,
-                    <<"initial">> => <<"0">>,
-                    <<"rate">> => <<"infinity">>
-                }
-        }
+    ?assertEqual(
+        #{},
+        remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => 100})
     ),
-    io:format("X5: ~p~n", [X5]),
-    X6 = remove_default_conf(
-        #{
-            <<"limiter">> => #{
-                <<"connection">> =>
-                    #{<<"capacity">> => 1000, <<"initial">> => <<"0">>, <<"rate">> => <<"1000/s">>}
-            }
-        },
-        #{
-            <<"limiter">> => #{
-                <<"connection">> =>
+    ?assertEqual(
+        #{},
+        remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => <<"100">>})
+    ),
+    ?assertEqual(
+        #{<<"def">> => 100},
+        remove_default_conf(#{<<"def">> => 100}, #{<<"def">> => #{<<"bar">> => 100}})
+    ),
+    ?assertEqual(
+        #{<<"def">> => #{<<"edf">> => 321}},
+        remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
+            <<"def">> => #{<<"abc">> => 100, <<"edf">> => 123}
+        })
+    ),
+    ?assertEqual(
+        #{},
+        remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => 321}}, #{
+            <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => 321}
+        })
+    ),
+    ?assertEqual(
+        #{},
+        remove_default_conf(#{<<"def">> => #{<<"abc">> => 100, <<"edf">> => <<"true">>}}, #{
+            <<"def">> => #{<<"abc">> => <<"100">>, <<"edf">> => true}
+        })
+    ),
+    ?assertEqual(
+        #{},
+        remove_default_conf(
+            #{
+                <<"bytes_in">> =>
                     #{
-                        <<"capacity">> => <<"1000">>,
+                        <<"capacity">> => infinity,
+                        <<"initial">> => 0,
+                        <<"rate">> => infinity
+                    }
+            },
+            #{
+                <<"bytes_in">> =>
+                    #{
+                        <<"capacity">> => <<"infinity">>,
                         <<"initial">> => <<"0">>,
-                        <<"rate">> => <<"1000/s">>
+                        <<"rate">> => <<"infinity">>
                     }
             }
-        }
+        )
     ),
-    io:format("X6: ~p~n", [X6]),
+    ?assertEqual(
+        #{},
+        remove_default_conf(
+            #{
+                <<"limiter">> => #{
+                    <<"connection">> =>
+                        #{
+                            <<"capacity">> => 1000,
+                            <<"initial">> => <<"0">>,
+                            <<"rate">> => <<"1000/s">>
+                        }
+                }
+            },
+            #{
+                <<"limiter">> => #{
+                    <<"connection">> =>
+                        #{
+                            <<"capacity">> => <<"1000">>,
+                            <<"initial">> => <<"0">>,
+                            <<"rate">> => <<"1000/s">>
+                        }
+                }
+            }
+        )
+    ),
     ok.
 
-%-endif.
+-endif.

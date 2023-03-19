@@ -31,8 +31,6 @@
     global_zone_configs/3
 ]).
 
--export([gen_schema/1]).
-
 -define(PREFIX, "/configs/").
 -define(PREFIX_RESET, "/configs_reset/").
 -define(ERR_MSG(MSG), list_to_binary(io_lib:format("~p", [MSG]))).
@@ -63,7 +61,11 @@
         <<"telemetry">>,
         <<"listeners">>,
         <<"license">>,
-        <<"api_key">>
+        <<"api_key">>,
+        <<"cluster">>,
+        <<"node">>,
+        <<"zones">>,
+        <<"broker">>
     ] ++ global_zone_roots()
 ).
 
@@ -217,8 +219,11 @@ config(get, _Params, Req) ->
     {200, get_raw_config(Path)};
 config(put, #{body := NewConf}, Req) ->
     Path = conf_path(Req),
-    case emqx_conf:update(Path, NewConf, ?OPTS) of
+    Console = maps:get(<<"console_handler">>, NewConf, #{}),
+    case emqx_conf:update(Path ++ [<<"console_handlers">>], Console, ?OPTS) of
         {ok, #{raw_config := RawConf}} ->
+            File = maps:get(<<"file_handlers">>, NewConf, #{}),
+            _ = emqx_conf:update(Path ++ [<<"file_handlers">>], File, ?OPTS),
             {200, RawConf};
         {error, {permission_denied, Reason}} ->
             {403, #{code => 'UPDATE_FAILED', message => Reason}};
@@ -338,34 +343,6 @@ config_list() ->
 conf_path(Req) ->
     <<"/api/v5", ?PREFIX, Path/binary>> = cowboy_req:path(Req),
     string:lexemes(Path, "/ ").
-
-%% TODO: generate from hocon schema
-gen_schema(Conf) when is_boolean(Conf) ->
-    with_default_value(#{type => boolean}, Conf);
-gen_schema(Conf) when is_binary(Conf); is_atom(Conf) ->
-    with_default_value(#{type => string}, Conf);
-gen_schema(Conf) when is_number(Conf) ->
-    with_default_value(#{type => number}, Conf);
-gen_schema(Conf) when is_list(Conf) ->
-    case io_lib:printable_unicode_list(Conf) of
-        true ->
-            gen_schema(unicode:characters_to_binary(Conf));
-        false ->
-            #{type => array, items => gen_schema(hd(Conf))}
-    end;
-gen_schema(Conf) when is_map(Conf) ->
-    #{
-        type => object,
-        properties =>
-            maps:map(fun(_K, V) -> gen_schema(V) end, Conf)
-    };
-gen_schema(_Conf) ->
-    %% the conf is not of JSON supported type, it may have been converted
-    %% by the hocon schema
-    #{type => string}.
-
-with_default_value(Type, Value) ->
-    Type#{example => emqx_map_lib:binary_string(Value)}.
 
 global_zone_roots() ->
     lists:map(fun({K, _}) -> K end, global_zone_schema()).
