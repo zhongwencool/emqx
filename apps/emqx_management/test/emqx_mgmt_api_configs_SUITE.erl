@@ -55,12 +55,17 @@ t_update(_Config) ->
     %% update ok
     {ok, SysMon} = get_config(<<"sysmon">>),
     #{<<"vm">> := #{<<"busy_port">> := BusyPort}} = SysMon,
-    NewSysMon = emqx_map_lib:deep_put([<<"vm">>, <<"busy_port">>], SysMon, not BusyPort),
+    NewSysMon = #{<<"vm">> => #{<<"busy_port">> => not BusyPort}},
     {ok, #{}} = update_config(<<"sysmon">>, NewSysMon),
     {ok, SysMon1} = get_config(<<"sysmon">>),
     #{<<"vm">> := #{<<"busy_port">> := BusyPort1}} = SysMon1,
     ?assertEqual(BusyPort, not BusyPort1),
     assert_busy_port(BusyPort1),
+    %% Make sure the override config is updated, and remove the default value.
+    ?assertEqual(
+        #{<<"vm">> => #{<<"busy_port">> => BusyPort1}},
+        maps:get(<<"sysmon">>, emqx_config:read_override_conf(#{override_to => cluster}))
+    ),
 
     %% update failed
     ErrorSysMon = emqx_map_lib:deep_put([<<"vm">>, <<"busy_port">>], SysMon, "123"),
@@ -130,6 +135,11 @@ t_global_zone(_Config) ->
     NewZones = emqx_map_lib:deep_put([<<"mqtt">>, <<"max_qos_allowed">>], Zones, 1),
     {ok, #{}} = update_global_zone(NewZones),
     ?assertEqual(1, emqx_config:get_zone_conf(no_default, [mqtt, max_qos_allowed])),
+    %% Make sure the override config is updated, and remove the default value.
+    ?assertEqual(
+        #{<<"max_qos_allowed">> => 1},
+        maps:get(<<"mqtt">>, emqx_config:read_override_conf(#{override_to => cluster}))
+    ),
 
     BadZones = emqx_map_lib:deep_put([<<"mqtt">>, <<"max_qos_allowed">>], Zones, 3),
     ?assertMatch({error, {"HTTP/1.1", 400, _}}, update_global_zone(BadZones)),
@@ -145,6 +155,11 @@ t_global_zone(_Config) ->
     %% the default value is 2
     ?assertEqual(2, emqx_map_lib:deep_get([<<"max_qos_allowed">>], Mqtt3)),
     ok = emqx_config:put_raw([<<"mqtt">>], Mqtt0),
+
+    DefaultZones = emqx_map_lib:deep_put([<<"mqtt">>, <<"max_qos_allowed">>], Zones, 2),
+    {ok, #{}} = update_global_zone(DefaultZones),
+    Conf = emqx_config:read_override_conf(#{override_to => cluster}),
+    ?assertNot(maps:is_key(<<"mqtt">>, Conf), Conf),
     ok.
 
 get_global_zone() ->
