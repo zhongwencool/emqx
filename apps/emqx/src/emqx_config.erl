@@ -536,7 +536,6 @@ get_root_names() ->
 save_configs(Paths0, AppEnvs, Conf, RawConf, OverrideConf, Opts) ->
     %% We first try to save to override.conf, because saving to files is more error prone
     %% than saving into memory.
-    %% todo log default [log,console_handler,file_handler,default]
     Paths = [Root | _] = [bin(Key) || Key <- Paths0],
     SchemaMod = get_schema_mod(Root),
     {_, {_, Schema}} = lists:keyfind(Root, 1, hocon_schema:roots(SchemaMod)),
@@ -758,12 +757,12 @@ atom_conf_path(Path, ExpFun, OnFail) ->
 
 merge_deprecated_cluster_override_to_local_override() ->
     case read_deprecated_override_conf() of
-        undefined ->
-            ok;
-        DeprecatedConf ->
+        DeprecatedConf when DeprecatedConf =/= #{} ->
             LocalOverrides = read_override_conf(#{override_to => local}),
             MergedConf = hocon:deep_merge(LocalOverrides, DeprecatedConf),
-            save_to_override_conf(MergedConf, #{override_to => local}),
+            _ = save_to_override_conf(MergedConf, #{override_to => local}),
+            ok;
+        _ ->
             ok
     end.
 
