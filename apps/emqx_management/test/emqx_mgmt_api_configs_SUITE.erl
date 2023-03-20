@@ -136,10 +136,7 @@ t_global_zone(_Config) ->
     {ok, #{}} = update_global_zone(NewZones),
     ?assertEqual(1, emqx_config:get_zone_conf(no_default, [mqtt, max_qos_allowed])),
     %% Make sure the override config is updated, and remove the default value.
-    ?assertEqual(
-        #{<<"max_qos_allowed">> => 1},
-        maps:get(<<"mqtt">>, emqx_config:read_override_conf(#{override_to => cluster}))
-    ),
+    ?assertEqual(#{<<"max_qos_allowed">> => 1}, read_conf(<<"mqtt">>)),
 
     BadZones = emqx_map_lib:deep_put([<<"mqtt">>, <<"max_qos_allowed">>], Zones, 3),
     ?assertMatch({error, {"HTTP/1.1", 400, _}}, update_global_zone(BadZones)),
@@ -158,8 +155,7 @@ t_global_zone(_Config) ->
 
     DefaultZones = emqx_map_lib:deep_put([<<"mqtt">>, <<"max_qos_allowed">>], Zones, 2),
     {ok, #{}} = update_global_zone(DefaultZones),
-    Conf = emqx_config:read_override_conf(#{override_to => cluster}),
-    ?assertNot(maps:is_key(<<"mqtt">>, Conf), Conf),
+    ?assertEqual(undefined, read_conf(<<"mqtt">>)),
     ok.
 
 get_global_zone() ->
@@ -184,7 +180,7 @@ t_dashboard(_Config) ->
     Https1 = #{enable => true, bind => 18084},
     ?assertMatch(
         {error, {"HTTP/1.1", 400, _}},
-        update_config("dashboard", Dashboard#{<<"https">> => Https1})
+        update_config("dashboard", Dashboard#{<<"listeners">> => Listeners#{<<"https">> => Https1}})
     ),
 
     Https2 = #{
@@ -194,35 +190,41 @@ t_dashboard(_Config) ->
         cacertfile => "etc/certs/badcacert.pem",
         certfile => "etc/certs/badcert.pem"
     },
-    Dashboard2 = Dashboard#{listeners => Listeners#{https => Https2}},
+    Dashboard2 = Dashboard#{<<"listeners">> => Listeners#{<<"https">> => Https2}},
     ?assertMatch(
         {error, {"HTTP/1.1", 400, _}},
         update_config("dashboard", Dashboard2)
     ),
 
-    Keyfile = emqx_common_test_helpers:app_path(emqx, filename:join(["etc", "certs", "key.pem"])),
-    Certfile = emqx_common_test_helpers:app_path(emqx, filename:join(["etc", "certs", "cert.pem"])),
-    Cacertfile = emqx_common_test_helpers:app_path(
+    KeyFile = emqx_common_test_helpers:app_path(emqx, filename:join(["etc", "certs", "key.pem"])),
+    CertFile = emqx_common_test_helpers:app_path(emqx, filename:join(["etc", "certs", "cert.pem"])),
+    CacertFile = emqx_common_test_helpers:app_path(
         emqx, filename:join(["etc", "certs", "cacert.pem"])
     ),
     Https3 = #{
-        enable => true,
-        bind => 18084,
-        keyfile => Keyfile,
-        cacertfile => Cacertfile,
-        certfile => Certfile
+        <<"enable">> => true,
+        <<"bind">> => 18084,
+        <<"keyfile">> => list_to_binary(KeyFile),
+        <<"cacertfile">> => list_to_binary(CacertFile),
+        <<"certfile">> => list_to_binary(CertFile)
     },
-    Dashboard3 = Dashboard#{listeners => Listeners#{https => Https3}},
+    Dashboard3 = Dashboard#{<<"listeners">> => Listeners#{<<"https">> => Https3}},
     ?assertMatch({ok, _}, update_config("dashboard", Dashboard3)),
 
-    Dashboard4 = Dashboard#{listeners => Listeners#{https => #{enable => false}}},
+    Dashboard4 = Dashboard#{<<"listeners">> => Listeners#{<<"https">> => #{<<"enable">> => false}}},
     ?assertMatch({ok, _}, update_config("dashboard", Dashboard4)),
+    {ok, Dashboard41} = get_config("dashboard"),
+    ?assertEqual(
+        Https3#{<<"enable">> => false},
+        read_conf([<<"dashboard">>, <<"listeners">>, <<"https">>]),
+        Dashboard41
+    ),
 
     ?assertMatch({ok, _}, update_config("dashboard", Dashboard)),
 
     {ok, Dashboard1} = get_config("dashboard"),
     ?assertNotEqual(Dashboard, Dashboard1),
-    timer:sleep(1000),
+    timer:sleep(1500),
     ok.
 
 t_configs_node({'init', Config}) ->
@@ -303,3 +305,11 @@ reset_config(Name, Key) ->
         {ok, []} -> ok;
         Error -> Error
     end.
+
+read_conf(RootKeys) when is_list(RootKeys) ->
+    case emqx_config:read_override_conf(#{override_to => cluster}) of
+        undefined -> undefined;
+        Conf -> emqx_map_lib:deep_get(RootKeys, Conf, undefined)
+    end;
+read_conf(RootKey) ->
+    read_conf([RootKey]).
