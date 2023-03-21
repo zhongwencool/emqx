@@ -117,6 +117,8 @@ remove_handler() ->
     ok = emqx_config_handler:remove_handler(Roots),
     ok.
 
+pre_config_update(_Path, {'$set', NewConf}, _RawConf) ->
+    ensure_ssl_cert(NewConf);
 pre_config_update(_Path, UpdateConf0, RawConf) ->
     UpdateConf = remove_sensitive_data(UpdateConf0),
     NewConf = emqx_map_lib:deep_merge(RawConf, UpdateConf),

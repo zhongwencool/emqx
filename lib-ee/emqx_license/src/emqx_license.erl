@@ -114,6 +114,9 @@ del_license_hook() ->
     _ = emqx_hooks:del('client.connect', {?MODULE, check, []}),
     ok.
 
+do_update({'$set', NewConf}, PrevConf) ->
+    #{<<"key">> := NewKey} = NewConf,
+    do_update({key, NewKey}, PrevConf);
 do_update({key, Content}, Conf) when is_binary(Content); is_list(Content) ->
     case emqx_license_parser:parse(Content) of
         {ok, _License} ->

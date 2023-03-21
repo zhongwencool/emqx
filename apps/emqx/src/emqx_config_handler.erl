@@ -30,8 +30,7 @@
     remove_handler/1,
     update_config/3,
     get_raw_cluster_override_conf/0,
-    info/0,
-    merge_to_old_config/2
+    info/0
 ]).
 
 %% gen_server callbacks
@@ -438,6 +437,8 @@ call_post_config_update(
 
 merge_to_old_config(UpdateReq, RawConf) when is_map(UpdateReq), is_map(RawConf) ->
     {ok, maps:merge(RawConf, UpdateReq)};
+merge_to_old_config({'$set', NewConf}, _RawConf) ->
+    {ok, NewConf};
 merge_to_old_config(UpdateReq, _RawConf) ->
     {ok, UpdateReq}.
 
