@@ -30,8 +30,7 @@
     remove_handler/1,
     update_config/3,
     get_raw_cluster_override_conf/0,
-    info/0,
-    merge_to_old_config/2
+    info/0
 ]).
 
 %% gen_server callbacks
