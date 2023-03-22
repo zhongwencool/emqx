@@ -122,7 +122,7 @@ pre_config_update(_, {remove_topic_metrics, Topic0}, RawConf) ->
     end;
 pre_config_update(_, {set_telemetry_status, Status}, RawConf) ->
     {ok, RawConf#{<<"enable">> => Status}};
-pre_config_update(_, {'$set', NewConf}, _OldConf) ->
+pre_config_update(_, NewConf, _OldConf) ->
     {ok, NewConf}.
 
 -spec post_config_update(
@@ -135,7 +135,7 @@ pre_config_update(_, {'$set', NewConf}, _OldConf) ->
     ok | {ok, Result :: any()} | {error, Reason :: term()}.
 
 post_config_update(
-    _,
+    _Path,
     {add_topic_metrics, Topic},
     _NewConfig,
     _OldConfig,
@@ -146,7 +146,7 @@ post_config_update(
         {error, Reason} -> {error, Reason}
     end;
 post_config_update(
-    _,
+    _Path,
     {remove_topic_metrics, Topic},
     _NewConfig,
     _OldConfig,
@@ -164,11 +164,10 @@ post_config_update(
     _AppEnvs
 ) ->
     update_telemetry(NewConfig);
-post_config_update([topic_metrics], {'$set', _}, NewConfig, _OldConfig, _AppEnvs) ->
-    _ = emqx_topic_metrics:deregister_all(),
-    _ = [emqx_topic_metrics:register(Topic) || Topic <- NewConfig],
-    ok;
-post_config_update([telemetry], {'$set', _}, NewConfig, _OldConfig, _AppEnvs) ->
+post_config_update([topic_metrics], _UpdateReq, NewConfig, _OldConfig, _AppEnvs) ->
+    ok = emqx_topic_metrics:deregister_all(),
+    lists:foreach(fun emqx_topic_metrics:register/1, NewConfig);
+post_config_update([telemetry], _UpdateReq, NewConfig, _OldConfig, _AppEnvs) ->
     update_telemetry(NewConfig).
 
 update_telemetry(#{enable := true}) -> emqx_telemetry:enable();
