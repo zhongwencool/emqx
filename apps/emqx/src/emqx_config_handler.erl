@@ -286,7 +286,6 @@ check_and_save_configs(
     Schema = schema(SchemaModule, ConfKeyPath),
     {AppEnvs, NewConf} = emqx_config:check_config(Schema, NewRawConf),
     OldConf = emqx_config:get_root(ConfKeyPath),
-    io:format("xxxx:~p~n", [{ConfKeyPath, Handlers, OldConf, NewConf}]),
     case do_post_config_update(ConfKeyPath, Handlers, OldConf, NewConf, AppEnvs, UpdateArgs, #{}) of
         {ok, Result0} ->
             ok = emqx_config:save_configs(AppEnvs, NewConf, NewRawConf, OverrideConf, Opts),
@@ -341,32 +340,16 @@ do_post_config_update(
     SubOldConf = get_sub_config(ConfKey, OldConf),
     SubNewConf = get_sub_config(ConfKey, NewConf),
     SubHandlers = get_sub_handlers(ConfKey, Handlers),
-    case
-        do_post_config_update(
-            SubConfKeyPath,
-            SubHandlers,
-            SubOldConf,
-            SubNewConf,
-            AppEnvs,
-            UpdateArgs,
-            Result,
-            ConfKeyPath
-        )
-    of
-        {ok, Result1} ->
-            %call_post_config_update(
-            %    Handlers,
-            %    OldConf,
-            %    NewConf,
-            %    AppEnvs,
-            %    up_req(UpdateArgs),
-            %    Result1,
-            %    ConfKeyPath
-            %);
-            {ok, Result1};
-        Error ->
-            Error
-    end.
+    do_post_config_update(
+        SubConfKeyPath,
+        SubHandlers,
+        SubOldConf,
+        SubNewConf,
+        AppEnvs,
+        UpdateArgs,
+        Result,
+        ConfKeyPath
+    ).
 
 get_sub_handlers(ConfKey, Handlers) ->
     case maps:find(ConfKey, Handlers) of
@@ -402,7 +385,6 @@ call_post_config_update(
     Result,
     ConfKeyPath
 ) ->
-    io:format("yyy:~p~n", [{HandlerName, OldConf, NewConf, UpdateReq, Result, ConfKeyPath}]),
     case erlang:function_exported(HandlerName, post_config_update, 5) of
         true ->
             case
