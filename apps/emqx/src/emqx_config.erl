@@ -346,14 +346,25 @@ reload_etc_conf_on_local_node() ->
     RawConf = parse_hocon(ConfFiles),
     case filter_readonly_conf(RawConf) of
         {ok, ReloadedConf} ->
-            maps:foreach(
-                fun(Key, Conf) ->
-                    emqx:update_config([Key], Conf, #{persistent => false})
+            maps:fold(
+                fun(Key, Conf, Acc) ->
+                    case emqx:update_config([Key], Conf, #{persistent => false}) of
+                        {ok, _} ->
+                            Acc;
+                        Error ->
+                            ?SLOG(error, #{
+                                msg => "Failed_to_reload_etc_config",
+                                key => Key,
+                                error => Error
+                            }),
+                            [{Key, Error} | Acc]
+                    end
                 end,
+                [],
                 ReloadedConf
             );
         {error, Error} ->
-            ?SLOG(error, #{msg => "Failed to reload etc config", error => Error})
+            ?SLOG(error, #{msg => "Failed_to_reload_etc_config", error => Error})
     end.
 
 filter_readonly_conf(RawConf) ->

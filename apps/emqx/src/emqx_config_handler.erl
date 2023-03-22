@@ -286,6 +286,7 @@ check_and_save_configs(
     Schema = schema(SchemaModule, ConfKeyPath),
     {AppEnvs, NewConf} = emqx_config:check_config(Schema, NewRawConf),
     OldConf = emqx_config:get_root(ConfKeyPath),
+    io:format("xxxx:~p~n", [{ConfKeyPath, Handlers, OldConf, NewConf}]),
     case do_post_config_update(ConfKeyPath, Handlers, OldConf, NewConf, AppEnvs, UpdateArgs, #{}) of
         {ok, Result0} ->
             ok = emqx_config:save_configs(AppEnvs, NewConf, NewRawConf, OverrideConf, Opts),
@@ -353,15 +354,16 @@ do_post_config_update(
         )
     of
         {ok, Result1} ->
-            call_post_config_update(
-                Handlers,
-                OldConf,
-                NewConf,
-                AppEnvs,
-                up_req(UpdateArgs),
-                Result1,
-                ConfKeyPath
-            );
+            %call_post_config_update(
+            %    Handlers,
+            %    OldConf,
+            %    NewConf,
+            %    AppEnvs,
+            %    up_req(UpdateArgs),
+            %    Result1,
+            %    ConfKeyPath
+            %);
+            {ok, Result1};
         Error ->
             Error
     end.
@@ -400,6 +402,7 @@ call_post_config_update(
     Result,
     ConfKeyPath
 ) ->
+    io:format("yyy:~p~n", [{HandlerName, OldConf, NewConf, UpdateReq, Result, ConfKeyPath}]),
     case erlang:function_exported(HandlerName, post_config_update, 5) of
         true ->
             case
