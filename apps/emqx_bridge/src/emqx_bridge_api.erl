@@ -20,6 +20,7 @@
 -include_lib("typerefl/include/types.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("emqx/include/logger.hrl").
+-include_lib("emqx_utils/include/emqx_utils_api.hrl").
 -include_lib("emqx_bridge/include/emqx_bridge.hrl").
 
 -import(hoconsc, [mk/2, array/1, enum/1]).
@@ -45,28 +46,26 @@
 ]).
 
 -export([lookup_from_local_node/2]).
-
--define(BAD_REQUEST(Reason), {400, error_msg('BAD_REQUEST', Reason)}).
+-export([get_metrics_from_local_node/2]).
 
 -define(BRIDGE_NOT_ENABLED,
     ?BAD_REQUEST(<<"Forbidden operation, bridge not enabled">>)
 ).
 
--define(NOT_FOUND(Reason), {404, error_msg('NOT_FOUND', Reason)}).
-
--define(BRIDGE_NOT_FOUND(BridgeType, BridgeName),
+-define(BRIDGE_NOT_FOUND(BRIDGE_TYPE, BRIDGE_NAME),
     ?NOT_FOUND(
-        <<"Bridge lookup failed: bridge named '", BridgeName/binary, "' of type ",
-            (atom_to_binary(BridgeType))/binary, " does not exist.">>
+        <<"Bridge lookup failed: bridge named '", (bin(BRIDGE_NAME))/binary, "' of type ",
+            (bin(BRIDGE_TYPE))/binary, " does not exist.">>
     )
 ).
 
+%% Don't turn bridge_name to atom, it's maybe not a existing atom.
 -define(TRY_PARSE_ID(ID, EXPR),
-    try emqx_bridge_resource:parse_bridge_id(Id) of
+    try emqx_bridge_resource:parse_bridge_id(Id, #{atom_name => false}) of
         {BridgeType, BridgeName} ->
             EXPR
     catch
-        throw:{invalid_bridge_id, Reason} ->
+        throw:#{reason := Reason} ->
             ?NOT_FOUND(<<"Invalid bridge ID, ", Reason/binary>>)
     end
 ).
@@ -161,22 +160,19 @@ param_path_enable() ->
             }
         )}.
 
-bridge_info_array_example(Method, WithMetrics) ->
-    [Config || #{value := Config} <- maps:values(bridge_info_examples(Method, WithMetrics))].
+bridge_info_array_example(Method) ->
+    lists:map(fun(#{value := Config}) -> Config end, maps:values(bridge_info_examples(Method))).
 
 bridge_info_examples(Method) ->
-    bridge_info_examples(Method, false).
-
-bridge_info_examples(Method, WithMetrics) ->
     maps:merge(
         #{
             <<"webhook_example">> => #{
                 summary => <<"WebHook">>,
-                value => info_example(webhook, Method, WithMetrics)
+                value => info_example(webhook, Method)
             },
             <<"mqtt_example">> => #{
                 summary => <<"MQTT Bridge">>,
-                value => info_example(mqtt, Method, WithMetrics)
+                value => info_example(mqtt, Method)
             }
         },
         ee_bridge_examples(Method)
@@ -189,35 +185,21 @@ ee_bridge_examples(Method) ->
 ee_bridge_examples(_Method) -> #{}.
 -endif.
 
-info_example(Type, Method, WithMetrics) ->
+info_example(Type, Method) ->
     maps:merge(
         info_example_basic(Type),
-        method_example(Type, Method, WithMetrics)
+        method_example(Type, Method)
     ).
 
-method_example(Type, Method, WithMetrics) when Method == get; Method == post ->
+method_example(Type, Method) when Method == get; Method == post ->
     SType = atom_to_list(Type),
     SName = SType ++ "_example",
-    TypeNameExam = #{
+    #{
         type => bin(SType),
         name => bin(SName)
-    },
-    maybe_with_metrics_example(TypeNameExam, Method, WithMetrics);
-method_example(_Type, put, _WithMetrics) ->
-    #{}.
-
-maybe_with_metrics_example(TypeNameExam, get, true) ->
-    TypeNameExam#{
-        metrics => ?EMPTY_METRICS,
-        node_metrics => [
-            #{
-                node => node(),
-                metrics => ?EMPTY_METRICS
-            }
-        ]
     };
-maybe_with_metrics_example(TypeNameExam, _, _) ->
-    TypeNameExam.
+method_example(_Type, put) ->
+    #{}.
 
 info_example_basic(webhook) ->
     #{
@@ -238,8 +220,8 @@ info_example_basic(webhook) ->
             health_check_interval => 15000,
             auto_restart_interval => 15000,
             query_mode => async,
-            async_inflight_window => 100,
-            max_queue_bytes => 100 * 1024 * 1024
+            inflight_window => 100,
+            max_buffer_bytes => 100 * 1024 * 1024
         }
     };
 info_example_basic(mqtt) ->
@@ -255,7 +237,7 @@ mqtt_main_example() ->
         server => <<"127.0.0.1:1883">>,
         proto_ver => <<"v4">>,
         username => <<"foo">>,
-        password => <<"bar">>,
+        password => <<"******">>,
         clean_start => true,
         keepalive => <<"300s">>,
         retry_interval => <<"15s">>,
@@ -264,7 +246,7 @@ mqtt_main_example() ->
             health_check_interval => <<"15s">>,
             auto_restart_interval => <<"60s">>,
             query_mode => sync,
-            max_queue_bytes => 100 * 1024 * 1024
+            max_buffer_bytes => 100 * 1024 * 1024
         },
         ssl => #{
             enable => false
@@ -301,18 +283,18 @@ schema("/bridges") ->
         'operationId' => '/bridges',
         get => #{
             tags => [<<"bridges">>],
-            summary => <<"List Bridges">>,
+            summary => <<"List bridges">>,
             description => ?DESC("desc_api1"),
             responses => #{
                 200 => emqx_dashboard_swagger:schema_with_example(
                     array(emqx_bridge_schema:get_response()),
-                    bridge_info_array_example(get, true)
+                    bridge_info_array_example(get)
                 )
             }
         },
         post => #{
             tags => [<<"bridges">>],
-            summary => <<"Create Bridge">>,
+            summary => <<"Create bridge">>,
             description => ?DESC("desc_api2"),
             'requestBody' => emqx_dashboard_swagger:schema_with_examples(
                 emqx_bridge_schema:post_request(),
@@ -329,7 +311,7 @@ schema("/bridges/:id") ->
         'operationId' => '/bridges/:id',
         get => #{
             tags => [<<"bridges">>],
-            summary => <<"Get Bridge">>,
+            summary => <<"Get bridge">>,
             description => ?DESC("desc_api3"),
             parameters => [param_path_id()],
             responses => #{
@@ -339,7 +321,7 @@ schema("/bridges/:id") ->
         },
         put => #{
             tags => [<<"bridges">>],
-            summary => <<"Update Bridge">>,
+            summary => <<"Update bridge">>,
             description => ?DESC("desc_api4"),
             parameters => [param_path_id()],
             'requestBody' => emqx_dashboard_swagger:schema_with_examples(
@@ -354,7 +336,7 @@ schema("/bridges/:id") ->
         },
         delete => #{
             tags => [<<"bridges">>],
-            summary => <<"Delete Bridge">>,
+            summary => <<"Delete bridge">>,
             description => ?DESC("desc_api5"),
             parameters => [param_path_id()],
             responses => #{
@@ -373,7 +355,7 @@ schema("/bridges/:id/metrics") ->
         'operationId' => '/bridges/:id/metrics',
         get => #{
             tags => [<<"bridges">>],
-            summary => <<"Get Bridge Metrics">>,
+            summary => <<"Get bridge metrics">>,
             description => ?DESC("desc_bridge_metrics"),
             parameters => [param_path_id()],
             responses => #{
@@ -387,7 +369,7 @@ schema("/bridges/:id/metrics/reset") ->
         'operationId' => '/bridges/:id/metrics/reset',
         put => #{
             tags => [<<"bridges">>],
-            summary => <<"Reset Bridge Metrics">>,
+            summary => <<"Reset bridge metrics">>,
             description => ?DESC("desc_api6"),
             parameters => [param_path_id()],
             responses => #{
@@ -402,7 +384,7 @@ schema("/bridges/:id/enable/:enable") ->
         put =>
             #{
                 tags => [<<"bridges">>],
-                summary => <<"Enable or Disable Bridge">>,
+                summary => <<"Enable or disable bridge">>,
                 desc => ?DESC("desc_enable_bridge"),
                 parameters => [param_path_id(), param_path_enable()],
                 responses =>
@@ -418,7 +400,7 @@ schema("/bridges/:id/:operation") ->
         'operationId' => '/bridges/:id/:operation',
         post => #{
             tags => [<<"bridges">>],
-            summary => <<"Stop or Restart Bridge">>,
+            summary => <<"Stop or restart bridge">>,
             description => ?DESC("desc_api7"),
             parameters => [
                 param_path_id(),
@@ -440,7 +422,7 @@ schema("/nodes/:node/bridges/:id/:operation") ->
         'operationId' => '/nodes/:node/bridges/:id/:operation',
         post => #{
             tags => [<<"bridges">>],
-            summary => <<"Stop/Restart Bridge">>,
+            summary => <<"Stop/restart bridge">>,
             description => ?DESC("desc_api8"),
             parameters => [
                 param_path_node(),
@@ -480,24 +462,23 @@ schema("/bridges_probe") ->
 '/bridges'(post, #{body := #{<<"type">> := BridgeType, <<"name">> := BridgeName} = Conf0}) ->
     case emqx_bridge:lookup(BridgeType, BridgeName) of
         {ok, _} ->
-            {400, error_msg('ALREADY_EXISTS', <<"bridge already exists">>)};
+            ?BAD_REQUEST('ALREADY_EXISTS', <<"bridge already exists">>);
         {error, not_found} ->
             Conf = filter_out_request_body(Conf0),
-            {ok, _} = emqx_bridge:create(BridgeType, BridgeName, Conf),
-            lookup_from_all_nodes(BridgeType, BridgeName, 201)
+            create_bridge(BridgeType, BridgeName, Conf)
     end;
 '/bridges'(get, _Params) ->
     Nodes = mria:running_nodes(),
-    NodeReplies = emqx_bridge_proto_v3:list_bridges_on_nodes(Nodes),
+    NodeReplies = emqx_bridge_proto_v4:list_bridges_on_nodes(Nodes),
     case is_ok(NodeReplies) of
         {ok, NodeBridges} ->
             AllBridges = [
-                format_resource(Data, Node)
-             || {Node, Bridges} <- lists:zip(Nodes, NodeBridges), Data <- Bridges
+                [format_resource(Data, Node) || Data <- Bridges]
+             || {Node, Bridges} <- lists:zip(Nodes, NodeBridges)
             ],
-            {200, zip_bridges([AllBridges])};
+            ?OK(zip_bridges(AllBridges));
         {error, Reason} ->
-            {500, error_msg('INTERNAL_ERROR', Reason)}
+            ?INTERNAL_ERROR(Reason)
     end.
 
 '/bridges/:id'(get, #{bindings := #{id := Id}}) ->
@@ -510,8 +491,7 @@ schema("/bridges_probe") ->
             {ok, _} ->
                 RawConf = emqx:get_raw_config([bridges, BridgeType, BridgeName], #{}),
                 Conf = deobfuscate(Conf1, RawConf),
-                {ok, _} = emqx_bridge:create(BridgeType, BridgeName, Conf),
-                lookup_from_all_nodes(BridgeType, BridgeName, 200);
+                update_bridge(BridgeType, BridgeName, Conf);
             {error, not_found} ->
                 ?BRIDGE_NOT_FOUND(BridgeType, BridgeName)
         end
@@ -529,16 +509,16 @@ schema("/bridges_probe") ->
                     end,
                 case emqx_bridge:check_deps_and_remove(BridgeType, BridgeName, AlsoDeleteActs) of
                     {ok, _} ->
-                        204;
+                        ?NO_CONTENT;
                     {error, {rules_deps_on_this_bridge, RuleIds}} ->
                         ?BAD_REQUEST(
                             {<<"Cannot delete bridge while active rules are defined for this bridge">>,
                                 RuleIds}
                         );
                     {error, timeout} ->
-                        {503, error_msg('SERVICE_UNAVAILABLE', <<"request timeout">>)};
+                        ?SERVICE_UNAVAILABLE(<<"request timeout">>);
                     {error, Reason} ->
-                        {500, error_msg('INTERNAL_ERROR', Reason)}
+                        ?INTERNAL_ERROR(Reason)
                 end;
             {error, not_found} ->
                 ?BRIDGE_NOT_FOUND(BridgeType, BridgeName)
@@ -546,7 +526,7 @@ schema("/bridges_probe") ->
     ).
 
 '/bridges/:id/metrics'(get, #{bindings := #{id := Id}}) ->
-    ?TRY_PARSE_ID(Id, lookup_from_all_nodes_metrics(BridgeType, BridgeName, 200)).
+    ?TRY_PARSE_ID(Id, get_metrics_from_all_nodes(BridgeType, BridgeName)).
 
 '/bridges/:id/metrics/reset'(put, #{bindings := #{id := Id}}) ->
     ?TRY_PARSE_ID(
@@ -555,7 +535,7 @@ schema("/bridges_probe") ->
             ok = emqx_bridge_resource:reset_metrics(
                 emqx_bridge_resource:resource_id(BridgeType, BridgeName)
             ),
-            {204}
+            ?NO_CONTENT
         end
     ).
 
@@ -566,9 +546,11 @@ schema("/bridges_probe") ->
             Params1 = maybe_deobfuscate_bridge_probe(Params),
             case emqx_bridge_resource:create_dry_run(ConnType, maps:remove(<<"type">>, Params1)) of
                 ok ->
-                    204;
+                    ?NO_CONTENT;
+                {error, #{kind := validation_error} = Reason} ->
+                    ?BAD_REQUEST('TEST_FAILED', map_to_json(Reason));
                 {error, Reason} when not is_tuple(Reason); element(1, Reason) =/= 'exit' ->
-                    {400, error_msg('TEST_FAILED', to_hr_reason(Reason))}
+                    ?BAD_REQUEST('TEST_FAILED', Reason)
             end;
         BadRequest ->
             BadRequest
@@ -586,23 +568,25 @@ maybe_deobfuscate_bridge_probe(#{<<"type">> := BridgeType, <<"name">> := BridgeN
 maybe_deobfuscate_bridge_probe(Params) ->
     Params.
 
-lookup_from_all_nodes(BridgeType, BridgeName, SuccCode) ->
-    FormatFun = fun format_bridge_info_without_metrics/1,
-    do_lookup_from_all_nodes(BridgeType, BridgeName, SuccCode, FormatFun).
-
-lookup_from_all_nodes_metrics(BridgeType, BridgeName, SuccCode) ->
-    FormatFun = fun format_bridge_metrics/1,
-    do_lookup_from_all_nodes(BridgeType, BridgeName, SuccCode, FormatFun).
-
-do_lookup_from_all_nodes(BridgeType, BridgeName, SuccCode, FormatFun) ->
+get_metrics_from_all_nodes(BridgeType, BridgeName) ->
     Nodes = mria:running_nodes(),
-    case is_ok(emqx_bridge_proto_v3:lookup_from_all_nodes(Nodes, BridgeType, BridgeName)) of
+    Result = do_bpapi_call(all, get_metrics_from_all_nodes, [Nodes, BridgeType, BridgeName]),
+    case Result of
+        Metrics when is_list(Metrics) ->
+            {200, format_bridge_metrics(lists:zip(Nodes, Metrics))};
+        {error, Reason} ->
+            ?INTERNAL_ERROR(Reason)
+    end.
+
+lookup_from_all_nodes(BridgeType, BridgeName, SuccCode) ->
+    Nodes = mria:running_nodes(),
+    case is_ok(emqx_bridge_proto_v4:lookup_from_all_nodes(Nodes, BridgeType, BridgeName)) of
         {ok, [{ok, _} | _] = Results} ->
-            {SuccCode, FormatFun([R || {ok, R} <- Results])};
+            {SuccCode, format_bridge_info([R || {ok, R} <- Results])};
         {ok, [{error, not_found} | _]} ->
             ?BRIDGE_NOT_FOUND(BridgeType, BridgeName);
         {error, Reason} ->
-            {500, error_msg('INTERNAL_ERROR', Reason)}
+            ?INTERNAL_ERROR(Reason)
     end.
 
 lookup_from_local_node(BridgeType, BridgeName) ->
@@ -610,6 +594,23 @@ lookup_from_local_node(BridgeType, BridgeName) ->
         {ok, Res} -> {ok, format_resource(Res, node())};
         Error -> Error
     end.
+
+create_bridge(BridgeType, BridgeName, Conf) ->
+    create_or_update_bridge(BridgeType, BridgeName, Conf, 201).
+
+update_bridge(BridgeType, BridgeName, Conf) ->
+    create_or_update_bridge(BridgeType, BridgeName, Conf, 200).
+
+create_or_update_bridge(BridgeType, BridgeName, Conf, HttpStatusCode) ->
+    case emqx_bridge:create(BridgeType, BridgeName, Conf) of
+        {ok, _} ->
+            lookup_from_all_nodes(BridgeType, BridgeName, HttpStatusCode);
+        {error, #{kind := validation_error} = Reason} ->
+            ?BAD_REQUEST(map_to_json(Reason))
+    end.
+
+get_metrics_from_local_node(BridgeType, BridgeName) ->
+    format_metrics(emqx_bridge:get_metrics(BridgeType, BridgeName)).
 
 '/bridges/:id/enable/:enable'(put, #{bindings := #{id := Id, enable := Enable}}) ->
     ?TRY_PARSE_ID(
@@ -620,15 +621,15 @@ lookup_from_local_node(BridgeType, BridgeName) ->
             OperFunc ->
                 case emqx_bridge:disable_enable(OperFunc, BridgeType, BridgeName) of
                     {ok, _} ->
-                        204;
+                        ?NO_CONTENT;
                     {error, {pre_config_update, _, bridge_not_found}} ->
                         ?BRIDGE_NOT_FOUND(BridgeType, BridgeName);
                     {error, {_, _, timeout}} ->
-                        {503, error_msg('SERVICE_UNAVAILABLE', <<"request timeout">>)};
+                        ?SERVICE_UNAVAILABLE(<<"request timeout">>);
                     {error, timeout} ->
-                        {503, error_msg('SERVICE_UNAVAILABLE', <<"request timeout">>)};
+                        ?SERVICE_UNAVAILABLE(<<"request timeout">>);
                     {error, Reason} ->
-                        {500, error_msg('INTERNAL_ERROR', Reason)}
+                        ?INTERNAL_ERROR(Reason)
                 end
         end
     ).
@@ -670,7 +671,7 @@ lookup_from_local_node(BridgeType, BridgeName) ->
                     false ->
                         ?BRIDGE_NOT_ENABLED;
                     true ->
-                        case emqx_misc:safe_to_existing_atom(Node, utf8) of
+                        case emqx_utils:safe_to_existing_atom(Node, utf8) of
                             {ok, TargetNode} ->
                                 call_operation(TargetNode, OperFunc, [
                                     TargetNode, BridgeType, BridgeName
@@ -712,7 +713,7 @@ zip_bridges([BridgesFirstNode | _] = BridgesAllNodes) ->
     lists:foldl(
         fun(#{type := Type, name := Name}, Acc) ->
             Bridges = pick_bridges_by_id(Type, Name, BridgesAllNodes),
-            [format_bridge_info_with_metrics(Bridges) | Acc]
+            [format_bridge_info(Bridges) | Acc]
         end,
         [],
         BridgesFirstNode
@@ -746,27 +747,23 @@ pick_bridges_by_id(Type, Name, BridgesAllNodes) ->
         BridgesAllNodes
     ).
 
-format_bridge_info_with_metrics([FirstBridge | _] = Bridges) ->
+format_bridge_info([FirstBridge | _] = Bridges) ->
     Res = maps:remove(node, FirstBridge),
-    NodeStatus = collect_status(Bridges),
-    NodeMetrics = collect_metrics(Bridges),
+    NodeStatus = node_status(Bridges),
     redact(Res#{
         status => aggregate_status(NodeStatus),
-        node_status => NodeStatus,
-        metrics => aggregate_metrics(NodeMetrics),
-        node_metrics => NodeMetrics
+        node_status => NodeStatus
     }).
 
-format_bridge_info_without_metrics(Bridges) ->
-    Res = format_bridge_info_with_metrics(Bridges),
-    maps:without([metrics, node_metrics], Res).
-
 format_bridge_metrics(Bridges) ->
-    Res = format_bridge_info_with_metrics(Bridges),
-    maps:with([metrics, node_metrics], Res).
+    NodeMetrics = collect_metrics(Bridges),
+    #{
+        metrics => aggregate_metrics(NodeMetrics),
+        node_metrics => NodeMetrics
+    }.
 
-collect_status(Bridges) ->
-    [maps:with([node, status], B) || B <- Bridges].
+node_status(Bridges) ->
+    [maps:with([node, status, status_reason], B) || B <- Bridges].
 
 aggregate_status(AllStatus) ->
     Head = fun([A | _]) -> A end,
@@ -778,7 +775,7 @@ aggregate_status(AllStatus) ->
     end.
 
 collect_metrics(Bridges) ->
-    [maps:with([node, metrics], B) || B <- Bridges].
+    [#{node => Node, metrics => Metrics} || {Node, Metrics} <- Bridges].
 
 aggregate_metrics(AllMetrics) ->
     InitMetrics = ?EMPTY_METRICS,
@@ -812,9 +809,7 @@ aggregate_metrics(
         M15 + N15,
         M16 + N16,
         M17 + N17
-    );
-aggregate_metrics(#{}, Metrics) ->
-    Metrics.
+    ).
 
 format_resource(
     #{
@@ -837,10 +832,15 @@ format_resource(
         )
     ).
 
-format_resource_data(#{status := Status, metrics := Metrics}) ->
-    #{status => Status, metrics => format_metrics(Metrics)};
-format_resource_data(#{status := Status}) ->
-    #{status => Status}.
+format_resource_data(ResData) ->
+    maps:fold(fun format_resource_data/3, #{}, maps:with([status, error], ResData)).
+
+format_resource_data(error, undefined, Result) ->
+    Result;
+format_resource_data(error, Error, Result) ->
+    Result#{status_reason => emqx_utils:readable_error_msg(Error)};
+format_resource_data(K, V, Result) ->
+    Result#{K => V}.
 
 format_metrics(#{
     counters := #{
@@ -892,10 +892,17 @@ fill_defaults(Type, RawConf) ->
 pack_bridge_conf(Type, RawConf) ->
     #{<<"bridges">> => #{bin(Type) => #{<<"foo">> => RawConf}}}.
 
-unpack_bridge_conf(Type, PackedConf) ->
-    #{<<"bridges">> := Bridges} = PackedConf,
-    #{<<"foo">> := RawConf} = maps:get(bin(Type), Bridges),
+%% Hide webhook's resource_opts.request_timeout from user.
+filter_raw_conf(<<"webhook">>, RawConf0) ->
+    emqx_utils_maps:deep_remove([<<"resource_opts">>, <<"request_timeout">>], RawConf0);
+filter_raw_conf(_TypeBin, RawConf) ->
     RawConf.
+
+unpack_bridge_conf(Type, PackedConf) ->
+    TypeBin = bin(Type),
+    #{<<"bridges">> := Bridges} = PackedConf,
+    #{<<"foo">> := RawConf} = maps:get(TypeBin, Bridges),
+    filter_raw_conf(TypeBin, RawConf).
 
 is_ok(ok) ->
     ok;
@@ -924,15 +931,13 @@ filter_out_request_body(Conf) ->
         <<"type">>,
         <<"name">>,
         <<"status">>,
+        <<"status_reason">>,
         <<"node_status">>,
         <<"node_metrics">>,
         <<"metrics">>,
         <<"node">>
     ],
     maps:without(ExtraConfs, Conf).
-
-error_msg(Code, Msg) ->
-    #{code => Code, message => emqx_misc:readable_error_msg(Msg)}.
 
 bin(S) when is_list(S) ->
     list_to_binary(S);
@@ -944,30 +949,31 @@ bin(S) when is_binary(S) ->
 call_operation(NodeOrAll, OperFunc, Args = [_Nodes, BridgeType, BridgeName]) ->
     case is_ok(do_bpapi_call(NodeOrAll, OperFunc, Args)) of
         Ok when Ok =:= ok; is_tuple(Ok), element(1, Ok) =:= ok ->
-            204;
+            ?NO_CONTENT;
         {error, not_implemented} ->
             %% Should only happen if we call `start` on a node that is
             %% still on an older bpapi version that doesn't support it.
             maybe_try_restart(NodeOrAll, OperFunc, Args);
         {error, timeout} ->
-            {503, error_msg('SERVICE_UNAVAILABLE', <<"request timeout">>)};
+            ?SERVICE_UNAVAILABLE(<<"Request timeout">>);
         {error, {start_pool_failed, Name, Reason}} ->
-            {503,
-                error_msg(
-                    'SERVICE_UNAVAILABLE',
-                    bin(
-                        io_lib:format(
-                            "failed to start ~p pool for reason ~p",
-                            [Name, Reason]
-                        )
-                    )
-                )};
+            ?SERVICE_UNAVAILABLE(
+                bin(io_lib:format("Failed to start ~p pool for reason ~p", [Name, Reason]))
+            );
         {error, not_found} ->
-            ?BRIDGE_NOT_FOUND(BridgeType, BridgeName);
+            BridgeId = emqx_bridge_resource:bridge_id(BridgeType, BridgeName),
+            ?SLOG(warning, #{
+                msg => "bridge_inconsistent_in_cluster_for_call_operation",
+                reason => not_found,
+                type => BridgeType,
+                name => BridgeName,
+                bridge => BridgeId
+            }),
+            ?SERVICE_UNAVAILABLE(<<"Bridge not found on remote node: ", BridgeId/binary>>);
         {error, {node_not_found, Node}} ->
             ?NOT_FOUND(<<"Node not found: ", (atom_to_binary(Node))/binary>>);
         {error, Reason} when not is_tuple(Reason); element(1, Reason) =/= 'exit' ->
-            ?BAD_REQUEST(to_hr_reason(Reason))
+            ?BAD_REQUEST(Reason)
     end.
 
 maybe_try_restart(all, start_bridges_to_all_nodes, Args) ->
@@ -975,7 +981,7 @@ maybe_try_restart(all, start_bridges_to_all_nodes, Args) ->
 maybe_try_restart(Node, start_bridge_to_node, Args) ->
     call_operation(Node, restart_bridge_to_node, Args);
 maybe_try_restart(_, _, _) ->
-    501.
+    ?NOT_IMPLEMENTED.
 
 do_bpapi_call(all, Call, Args) ->
     maybe_unwrap(
@@ -992,7 +998,7 @@ do_bpapi_call(Node, Call, Args) ->
 do_bpapi_call_vsn(SupportedVersion, Call, Args) ->
     case lists:member(SupportedVersion, supported_versions(Call)) of
         true ->
-            apply(emqx_bridge_proto_v3, Call, Args);
+            apply(emqx_bridge_proto_v4, Call, Args);
         false ->
             {error, not_implemented}
     end.
@@ -1002,25 +1008,13 @@ maybe_unwrap({error, not_implemented}) ->
 maybe_unwrap(RpcMulticallResult) ->
     emqx_rpc:unwrap_erpc(RpcMulticallResult).
 
-supported_versions(start_bridge_to_node) -> [2, 3];
-supported_versions(start_bridges_to_all_nodes) -> [2, 3];
-supported_versions(_Call) -> [1, 2, 3].
-
-to_hr_reason(nxdomain) ->
-    <<"Host not found">>;
-to_hr_reason(econnrefused) ->
-    <<"Connection refused">>;
-to_hr_reason({unauthorized_client, _}) ->
-    <<"Unauthorized client">>;
-to_hr_reason({not_authorized, _}) ->
-    <<"Not authorized">>;
-to_hr_reason({malformed_username_or_password, _}) ->
-    <<"Malformed username or password">>;
-to_hr_reason(Reason) ->
-    Reason.
+supported_versions(start_bridge_to_node) -> [2, 3, 4];
+supported_versions(start_bridges_to_all_nodes) -> [2, 3, 4];
+supported_versions(get_metrics_from_all_nodes) -> [4];
+supported_versions(_Call) -> [1, 2, 3, 4].
 
 redact(Term) ->
-    emqx_misc:redact(Term).
+    emqx_utils:redact(Term).
 
 deobfuscate(NewConf, OldConf) ->
     maps:fold(
@@ -1031,7 +1025,7 @@ deobfuscate(NewConf, OldConf) ->
                 {ok, OldV} when is_map(V), is_map(OldV) ->
                     Acc#{K => deobfuscate(V, OldV)};
                 {ok, OldV} ->
-                    case emqx_misc:is_redacted(K, V) of
+                    case emqx_utils:is_redacted(K, V) of
                         true ->
                             Acc#{K => OldV};
                         _ ->
@@ -1041,4 +1035,9 @@ deobfuscate(NewConf, OldConf) ->
         end,
         #{},
         NewConf
+    ).
+
+map_to_json(M) ->
+    emqx_utils_json:encode(
+        emqx_utils_maps:jsonable_map(M, fun(K, V) -> {K, emqx_utils_maps:binary_string(V)} end)
     ).

@@ -3,7 +3,6 @@
 %%--------------------------------------------------------------------
 -module(emqx_ee_bridge_redis).
 
--include_lib("emqx_bridge/include/emqx_bridge.hrl").
 -include_lib("typerefl/include/types.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 
@@ -46,7 +45,7 @@ conn_bridge_examples(Method) ->
     ].
 
 values(Protocol, get) ->
-    maps:merge(values(Protocol, post), ?METRICS_EXAMPLE);
+    values(Protocol, post);
 values("single", post) ->
     SpecificOpts = #{
         server => <<"127.0.0.1:6379">>,
@@ -78,7 +77,7 @@ values(common, RedisType, SpecificOpts) ->
         enable => true,
         local_topic => <<"local/topic/#">>,
         pool_size => 8,
-        password => <<"secret">>,
+        password => <<"******">>,
         command_template => [<<"LPUSH">>, <<"MSGS">>, <<"${payload}">>],
         resource_opts => values(resource_opts, RedisType, #{}),
         ssl => #{enable => false}
@@ -181,10 +180,10 @@ resource_fields(Type) ->
 resource_creation_fields("redis_cluster") ->
     % TODO
     % Cluster bridge is currently incompatible with batching.
-    Fields = emqx_resource_schema:fields("creation_opts_sync_only"),
+    Fields = emqx_resource_schema:fields("creation_opts"),
     lists:foldl(fun proplists:delete/2, Fields, [batch_size, batch_time, enable_batch]);
 resource_creation_fields(_) ->
-    emqx_resource_schema:fields("creation_opts_sync_only").
+    emqx_resource_schema:fields("creation_opts").
 
 desc("config") ->
     ?DESC("desc_config");

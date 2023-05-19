@@ -96,7 +96,7 @@ listeners(post, #{bindings := #{name := Name0}, body := LConf}) ->
         LName = binary_to_atom(maps:get(<<"name">>, LConf)),
 
         Path = [listeners, Type, LName],
-        case emqx_map_lib:deep_get(Path, RunningConf, undefined) of
+        case emqx_utils_maps:deep_get(Path, RunningConf, undefined) of
             undefined ->
                 ListenerId = emqx_gateway_utils:listener_id(
                     GwName, Type, LName
@@ -110,14 +110,12 @@ listeners(post, #{bindings := #{name := Name0}, body := LConf}) ->
         end
     end).
 
-listeners_insta(delete, #{bindings := #{name := Name0, id := ListenerId0}}) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
+listeners_insta(delete, #{bindings := #{name := Name0, id := ListenerId}}) ->
     with_gateway(Name0, fun(_GwName, _) ->
         ok = emqx_gateway_http:remove_listener(ListenerId),
         {204}
     end);
-listeners_insta(get, #{bindings := #{name := Name0, id := ListenerId0}}) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
+listeners_insta(get, #{bindings := #{name := Name0, id := ListenerId}}) ->
     with_gateway(Name0, fun(_GwName, _) ->
         case emqx_gateway_conf:listener(ListenerId) of
             {ok, Listener} ->
@@ -130,9 +128,8 @@ listeners_insta(get, #{bindings := #{name := Name0, id := ListenerId0}}) ->
     end);
 listeners_insta(put, #{
     body := LConf,
-    bindings := #{name := Name0, id := ListenerId0}
+    bindings := #{name := Name0, id := ListenerId}
 }) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
     with_gateway(Name0, fun(_GwName, _) ->
         {ok, RespConf} = emqx_gateway_http:update_listener(ListenerId, LConf),
         {200, RespConf}
@@ -141,10 +138,9 @@ listeners_insta(put, #{
 listeners_insta_authn(get, #{
     bindings := #{
         name := Name0,
-        id := ListenerId0
+        id := ListenerId
     }
 }) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
     with_gateway(Name0, fun(GwName, _) ->
         try emqx_gateway_http:authn(GwName, ListenerId) of
             Authn -> {200, Authn}
@@ -157,10 +153,9 @@ listeners_insta_authn(post, #{
     body := Conf,
     bindings := #{
         name := Name0,
-        id := ListenerId0
+        id := ListenerId
     }
 }) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
     with_gateway(Name0, fun(GwName, _) ->
         {ok, Authn} = emqx_gateway_http:add_authn(GwName, ListenerId, Conf),
         {201, Authn}
@@ -169,10 +164,9 @@ listeners_insta_authn(put, #{
     body := Conf,
     bindings := #{
         name := Name0,
-        id := ListenerId0
+        id := ListenerId
     }
 }) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
     with_gateway(Name0, fun(GwName, _) ->
         {ok, Authn} = emqx_gateway_http:update_authn(
             GwName, ListenerId, Conf
@@ -182,10 +176,9 @@ listeners_insta_authn(put, #{
 listeners_insta_authn(delete, #{
     bindings := #{
         name := Name0,
-        id := ListenerId0
+        id := ListenerId
     }
 }) ->
-    ListenerId = emqx_mgmt_util:urldecode(ListenerId0),
     with_gateway(Name0, fun(GwName, _) ->
         ok = emqx_gateway_http:remove_authn(GwName, ListenerId),
         {204}
@@ -362,7 +355,7 @@ schema("/gateways/:name/listeners") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(list_listeners),
-                summary => <<"List All Listeners">>,
+                summary => <<"List all listeners">>,
                 parameters => params_gateway_name_in_path(),
                 responses =>
                     ?STANDARD_RESP(
@@ -378,7 +371,7 @@ schema("/gateways/:name/listeners") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(add_listener),
-                summary => <<"Add a Listener">>,
+                summary => <<"Add listener">>,
                 parameters => params_gateway_name_in_path(),
                 %% XXX: How to distinguish the different listener supported by
                 %% different types of gateways?
@@ -404,7 +397,7 @@ schema("/gateways/:name/listeners/:id") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(get_listener),
-                summary => <<"Get the Listener Configs">>,
+                summary => <<"Get listener config">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 responses =>
@@ -421,7 +414,7 @@ schema("/gateways/:name/listeners/:id") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(delete_listener),
-                summary => <<"Delete the Listener">>,
+                summary => <<"Delete listener">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 responses =>
@@ -431,7 +424,7 @@ schema("/gateways/:name/listeners/:id") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(update_listener),
-                summary => <<"Update the Listener Configs">>,
+                summary => <<"Update listener config">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 'requestBody' => emqx_dashboard_swagger:schema_with_examples(
@@ -456,7 +449,7 @@ schema("/gateways/:name/listeners/:id/authentication") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(get_listener_authn),
-                summary => <<"Get the Listener's Authenticator">>,
+                summary => <<"Get the listener's authenticator">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 responses =>
@@ -471,7 +464,7 @@ schema("/gateways/:name/listeners/:id/authentication") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(add_listener_authn),
-                summary => <<"Create an Authenticator for a Listener">>,
+                summary => <<"Create authenticator for listener">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 'requestBody' => schema_authn(),
@@ -482,7 +475,7 @@ schema("/gateways/:name/listeners/:id/authentication") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(update_listener_authn),
-                summary => <<"Update the Listener Authenticator configs">>,
+                summary => <<"Update config of authenticator for listener">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 'requestBody' => schema_authn(),
@@ -493,7 +486,7 @@ schema("/gateways/:name/listeners/:id/authentication") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(delete_listener_authn),
-                summary => <<"Delete the Listener's Authenticator">>,
+                summary => <<"Delete the listener's authenticator">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 responses =>
@@ -507,7 +500,7 @@ schema("/gateways/:name/listeners/:id/authentication/users") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(list_users),
-                summary => <<"List Authenticator's Users">>,
+                summary => <<"List authenticator's users">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path() ++
                     params_paging_in_qs(),
@@ -525,7 +518,7 @@ schema("/gateways/:name/listeners/:id/authentication/users") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(add_user),
-                summary => <<"Add User for an Authenticator">>,
+                summary => <<"Add user for an authenticator">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path(),
                 'requestBody' => emqx_dashboard_swagger:schema_with_examples(
@@ -550,7 +543,7 @@ schema("/gateways/:name/listeners/:id/authentication/users/:uid") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(get_user),
-                summary => <<"Get User Info">>,
+                summary => <<"Get user info">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path() ++
                     params_userid_in_path(),
@@ -568,7 +561,7 @@ schema("/gateways/:name/listeners/:id/authentication/users/:uid") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(update_user),
-                summary => <<"Update User Info">>,
+                summary => <<"Update user info">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path() ++
                     params_userid_in_path(),
@@ -590,7 +583,7 @@ schema("/gateways/:name/listeners/:id/authentication/users/:uid") ->
             #{
                 tags => ?TAGS,
                 desc => ?DESC(delete_user),
-                summary => <<"Delete User">>,
+                summary => <<"Delete user">>,
                 parameters => params_gateway_name_in_path() ++
                     params_listener_id_in_path() ++
                     params_userid_in_path(),
@@ -712,7 +705,7 @@ examples_listener() ->
     #{
         tcp_listener =>
             #{
-                summary => <<"A simple tcp listener example">>,
+                summary => <<"A simple TCP listener example">>,
                 value =>
                     #{
                         name => <<"tcp-def">>,
@@ -738,7 +731,7 @@ examples_listener() ->
             },
         ssl_listener =>
             #{
-                summary => <<"A simple ssl listener example">>,
+                summary => <<"A simple SSL listener example">>,
                 value =>
                     #{
                         name => <<"ssl-def">>,
@@ -771,7 +764,7 @@ examples_listener() ->
             },
         udp_listener =>
             #{
-                summary => <<"A simple udp listener example">>,
+                summary => <<"A simple UDP listener example">>,
                 value =>
                     #{
                         name => <<"udp-def">>,
@@ -789,7 +782,7 @@ examples_listener() ->
             },
         dtls_listener =>
             #{
-                summary => <<"A simple dtls listener example">>,
+                summary => <<"A simple DTLS listener example">>,
                 value =>
                     #{
                         name => <<"dtls-def">>,
@@ -817,7 +810,7 @@ examples_listener() ->
             },
         dtls_listener_with_psk_ciphers =>
             #{
-                summary => <<"A dtls listener with PSK example">>,
+                summary => <<"A DTLS listener with PSK example">>,
                 value =>
                     #{
                         name => <<"dtls-psk">>,
@@ -845,7 +838,7 @@ examples_listener() ->
             },
         lisetner_with_authn =>
             #{
-                summary => <<"A tcp listener with authentication example">>,
+                summary => <<"A TCP listener with authentication example">>,
                 value =>
                     #{
                         name => <<"tcp-with-authn">>,

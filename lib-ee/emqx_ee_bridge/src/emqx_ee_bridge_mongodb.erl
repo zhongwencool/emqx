@@ -5,7 +5,6 @@
 
 -include_lib("typerefl/include/types.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
--include_lib("emqx_bridge/include/emqx_bridge.hrl").
 
 -import(hoconsc, [mk/2, enum/1, ref/2]).
 
@@ -39,7 +38,7 @@ fields("config") ->
         {enable, mk(boolean(), #{desc => ?DESC("enable"), default => true})},
         {collection, mk(binary(), #{desc => ?DESC("collection"), default => <<"mqtt">>})},
         {payload_template, mk(binary(), #{required => false, desc => ?DESC("payload_template")})}
-    ] ++ emqx_resource_schema:fields("resource_opts_sync_only");
+    ] ++ emqx_resource_schema:fields("resource_opts");
 fields(mongodb_rs) ->
     emqx_connector_mongo:fields(rs) ++ fields("config");
 fields(mongodb_sharded) ->
@@ -150,15 +149,12 @@ values(common, MongoType, Method, TypeOpts) ->
         srv_record => false,
         pool_size => 8,
         username => <<"myuser">>,
-        password => <<"mypass">>
+        password => <<"******">>
     },
     MethodVals = method_values(MongoType, Method),
     Vals0 = maps:merge(MethodVals, Common),
     maps:merge(Vals0, TypeOpts).
 
-method_values(MongoType, get) ->
-    Vals = method_values(MongoType, post),
-    maps:merge(?METRICS_EXAMPLE, Vals);
 method_values(MongoType, _) ->
     ConnectorType =
         case MongoType of

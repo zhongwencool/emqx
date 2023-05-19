@@ -64,14 +64,17 @@ groups() ->
         {group, batch_on},
         {group, batch_off}
     ],
+    QueryModeGroups = [{group, async}, {group, sync}],
     [
         {rest, TCs},
         {transports, [
             {group, tcp},
             {group, tls}
         ]},
-        {tcp, TypeGroups},
-        {tls, TypeGroups},
+        {tcp, QueryModeGroups},
+        {tls, QueryModeGroups},
+        {async, TypeGroups},
+        {sync, TypeGroups},
         {redis_single, BatchGroups},
         {redis_sentinel, BatchGroups},
         {redis_cluster, BatchGroups},
@@ -79,6 +82,10 @@ groups() ->
         {batch_off, ResourceSpecificTCs}
     ].
 
+init_per_group(async, Config) ->
+    [{query_mode, async} | Config];
+init_per_group(sync, Config) ->
+    [{query_mode, sync} | Config];
 init_per_group(Group, Config) when
     Group =:= redis_single; Group =:= redis_sentinel; Group =:= redis_cluster
 ->
@@ -149,8 +156,9 @@ init_per_testcase(_Testcase, Config) ->
             {skip, "Batching is not supported by 'redis_cluster' bridge type"};
         {RedisType, BatchMode} ->
             Transport = ?config(transport, Config),
+            QueryMode = ?config(query_mode, Config),
             #{RedisType := #{Transport := RedisConnConfig}} = redis_connect_configs(),
-            #{BatchMode := ResourceConfig} = resource_configs(),
+            #{BatchMode := ResourceConfig} = resource_configs(#{query_mode => QueryMode}),
             IsBatch = (BatchMode =:= batch_on),
             BridgeConfig0 = maps:merge(RedisConnConfig, ?COMMON_REDIS_OPTS),
             BridgeConfig1 = BridgeConfig0#{<<"resource_opts">> => ResourceConfig},
@@ -210,8 +218,7 @@ t_check_values(_Config) ->
     lists:foreach(
         fun(Method) ->
             lists:foreach(
-                fun({RedisType, #{value := Value0}}) ->
-                    Value = maps:without(maps:keys(?METRICS_EXAMPLE), Value0),
+                fun({RedisType, #{value := Value}}) ->
                     MethodBin = atom_to_binary(Method),
                     Type = string:slice(RedisType, length("redis_")),
                     RefName = binary_to_list(<<MethodBin/binary, "_", Type/binary>>),
@@ -302,7 +309,7 @@ t_permanent_error(_Config) ->
             ?wait_async_action(
                 publish_message(Topic, Payload),
                 #{?snk_kind := redis_ee_connector_send_done},
-                10000
+                10_000
             )
         end,
         fun(Trace) ->
@@ -442,9 +449,14 @@ all_test_hosts() ->
     ).
 
 parse_servers(Servers) ->
-    emqx_schema:parse_servers(Servers, #{
-        default_port => 6379
-    }).
+    lists:map(
+        fun(#{hostname := Host, port := Port}) ->
+            {Host, Port}
+        end,
+        emqx_schema:parse_servers(Servers, #{
+            default_port => 6379
+        })
+    ).
 
 redis_connect_ssl_opts(Type) ->
     maps:merge(
@@ -530,14 +542,14 @@ invalid_command_bridge_config() ->
         <<"command_template">> => [<<"BAD">>, <<"COMMAND">>, <<"${payload}">>]
     }.
 
-resource_configs() ->
+resource_configs(#{query_mode := QueryMode}) ->
     #{
         batch_off => #{
-            <<"query_mode">> => <<"sync">>,
+            <<"query_mode">> => atom_to_binary(QueryMode),
             <<"start_timeout">> => <<"15s">>
         },
         batch_on => #{
-            <<"query_mode">> => <<"sync">>,
+            <<"query_mode">> => atom_to_binary(QueryMode),
             <<"worker_pool_size">> => <<"1">>,
             <<"batch_size">> => integer_to_binary(?BATCH_SIZE),
             <<"start_timeout">> => <<"15s">>,
