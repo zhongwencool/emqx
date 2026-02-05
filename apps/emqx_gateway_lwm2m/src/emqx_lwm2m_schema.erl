@@ -87,7 +87,7 @@ fields(lwm2m) ->
             )},
         {coap_max_block_size,
             sc(
-                hoconsc:enum([16, 32, 64, 128, 256, 512, 1024]),
+                range(16, 1024),
                 #{
                     default => 1024,
                     desc => ?DESC(lwm2m_coap_max_block_size)
