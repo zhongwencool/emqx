@@ -165,7 +165,8 @@ groups() ->
             case127_channel_internal_branches,
             case128_session_internal_branches,
             case129_write_hex_encoding,
-            case130_auto_observe_list_config
+            case130_auto_observe_list_config,
+            case132_coap_max_block_size
         ]}
     ].
 
@@ -336,6 +337,41 @@ default_config_with_update_condition_raw(UpdateConditionRaw) ->
             "  }\n"
             "}\n",
             [XmlDir, UpdateConditionRaw, ?PORT]
+        )
+    ).
+
+default_config_with_coap_max_block_size(MaxSize) ->
+    XmlDir = filename:join(
+        [
+            emqx_common_test_helpers:proj_root(),
+            "apps",
+            "emqx_gateway_lwm2m",
+            "lwm2m_xml"
+        ]
+    ),
+    iolist_to_binary(
+        io_lib:format(
+            "\n"
+            "gateway.lwm2m {\n"
+            "  xml_dir = \"~s\"\n"
+            "  lifetime_min = 1s\n"
+            "  lifetime_max = 86400s\n"
+            "  qmode_time_window = 22s\n"
+            "  auto_observe = false\n"
+            "  mountpoint = \"lwm2m/${username}\"\n"
+            "  coap_max_block_size = ~w\n"
+            "  translators {\n"
+            "    command = {topic = \"/dn/#\", qos = 0}\n"
+            "    response = {topic = \"/up/resp\", qos = 0}\n"
+            "    notify = {topic = \"/up/notify\", qos = 0}\n"
+            "    register = {topic = \"/up/resp\", qos = 0}\n"
+            "    update = {topic = \"/up/resp\", qos = 0}\n"
+            "  }\n"
+            "  listeners.udp.default {\n"
+            "    bind = ~w\n"
+            "  }\n"
+            "}\n",
+            [XmlDir, MaxSize, ?PORT]
         )
     ).
 
@@ -5276,6 +5312,39 @@ case130_auto_observe_list_config(_Config) ->
         ?global_ns, default_config_with_auto_observe_raw(OffRaw), #{mode => replace}
     ),
     ?assertEqual([], emqx_lwm2m_session:auto_observe_object_list(RegInfo)).
+
+case132_coap_max_block_size(_Config) ->
+    BaseReq =
+        (emqx_coap_message:request(con, post, <<>>, []))#coap_message{
+            id = 1
+        },
+    ?assert(
+        is_binary(
+            emqx_coap_frame:serialize_pkt(
+                BaseReq#coap_message{options = #{block1 => {0, true, 1024}}},
+                undefined
+            )
+        )
+    ),
+    ok = emqx_conf_cli:load_config(
+        ?global_ns, default_config_with_coap_max_block_size(256), #{mode => replace}
+    ),
+    ?assertException(
+        throw,
+        {bad_block, invalid_size},
+        emqx_coap_frame:serialize_pkt(
+            BaseReq#coap_message{options = #{block1 => {0, true, 512}}},
+            undefined
+        )
+    ),
+    ?assert(
+        is_binary(
+            emqx_coap_frame:serialize_pkt(
+                BaseReq#coap_message{options = #{block1 => {0, true, 256}}},
+                undefined
+            )
+        )
+    ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Internal Functions

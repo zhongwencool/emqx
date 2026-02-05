@@ -20,6 +20,10 @@ For example, after receiving an update message from a client, any messages withi
 lwm2m_translators.desc:
 """Topic configuration for LwM2M's gateway publishing and subscription."""
 
+lwm2m_coap_max_block_size.desc:
+"""The maximum size in bytes of a CoAP payload that does not need to be sent using blockwise transfer.
+Allowed values: 16, 32, 64, 128, 256, 512, 1024."""
+
 lwm2m_translators_command.desc:
 """The topic for receiving downstream commands.
 For each new LwM2M client that succeeds in going online, the gateway creates a subscription relationship to receive downstream commands and send it to the LwM2M client"""

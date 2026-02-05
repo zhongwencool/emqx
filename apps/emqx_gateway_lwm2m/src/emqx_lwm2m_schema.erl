@@ -85,6 +85,14 @@ fields(lwm2m) ->
                     desc => ?DESC(lwm2m_translators)
                 }
             )},
+        {coap_max_block_size,
+            sc(
+                hoconsc:enum([16, 32, 64, 128, 256, 512, 1024]),
+                #{
+                    default => 1024,
+                    desc => ?DESC(lwm2m_coap_max_block_size)
+                }
+            )},
         {mountpoint, emqx_gateway_schema:mountpoint("lwm2m/${endpoint_name}/")},
         {listeners, sc(ref(emqx_gateway_schema, udp_listeners), #{desc => ?DESC(udp_listeners)})}
     ] ++ emqx_gateway_schema:gateway_common_options();
