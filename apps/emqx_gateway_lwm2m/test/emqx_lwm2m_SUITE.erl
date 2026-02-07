@@ -172,7 +172,10 @@ groups() ->
             case134_auto_observe_empty_list,
             case135_auto_observe_invalid_types,
             case136_update_publish_condition_legacy,
-            case137_cmd_error_paths
+            case137_cmd_error_paths,
+            case138_blockwise_downlink_busy,
+            case139_block2_publish_once,
+            case140_block2_auto_tx_response
         ]}
     ].
 
@@ -5407,20 +5410,20 @@ case132_coap_max_block_size(_Config) ->
     ok = emqx_conf_cli:load_config(
         ?global_ns, default_config_with_coap_max_block_size(256), #{mode => replace}
     ),
+    ?assert(
+        is_binary(
+            emqx_coap_frame:serialize_pkt(
+                BaseReq#coap_message{options = #{block1 => {0, true, 512}}},
+                undefined
+            )
+        )
+    ),
     ?assertException(
         throw,
         {bad_block, invalid_size},
         emqx_coap_frame:serialize_pkt(
-            BaseReq#coap_message{options = #{block1 => {0, true, 512}}},
+            BaseReq#coap_message{options = #{block1 => {0, true, 2048}}},
             undefined
-        )
-    ),
-    ?assert(
-        is_binary(
-            emqx_coap_frame:serialize_pkt(
-                BaseReq#coap_message{options = #{block1 => {0, true, 256}}},
-                undefined
-            )
         )
     ).
 
@@ -5542,6 +5545,181 @@ case137_cmd_error_paths(_Config) ->
         }
     },
     ?assertException(error, _, emqx_lwm2m_cmd:mqtt_to_coap(<<"/">>, MissingValueCmd)).
+
+case138_blockwise_downlink_busy(_Config) ->
+    WithContext = capture_with_context(self()),
+    Session0 = emqx_lwm2m_session:new(),
+    Session1 = setelement(7, Session0, #{<<"alternatePath">> => <<"/">>}),
+    LargeValue = binary:copy(<<"A">>, 3000),
+    Cmd1 = #{
+        <<"msgType">> => <<"write">>,
+        <<"requestID">> => 1001,
+        <<"data">> => #{
+            <<"path">> => <<"/3/0/1">>,
+            <<"type">> => <<"String">>,
+            <<"value">> => LargeValue
+        }
+    },
+    #{return := {Outs1, Session2}} = emqx_lwm2m_session:send_cmd(Cmd1, WithContext, Session1),
+    [FirstReq | _] = Outs1,
+    ?assertMatch({0, true, _}, maps:get(block1, FirstReq#coap_message.options)),
+    flush_publish_msgs(),
+
+    Cmd2 = Cmd1#{<<"requestID">> => 1002},
+    #{return := {OutsBusy, Session3}} = emqx_lwm2m_session:send_cmd(Cmd2, WithContext, Session2),
+    ?assertEqual([], OutsBusy),
+    BusyPayload = wait_publish_payload(),
+    ?assertEqual(<<"coap_busy">>, maps:get(<<"msgType">>, BusyPayload)),
+
+    ContinueResp = emqx_coap_message:piggyback({ok, continue}, FirstReq),
+    #{return := {Outs2, _Session4}} = emqx_lwm2m_session:handle_protocol_in(
+        {response, {Cmd1, ContinueResp}},
+        WithContext,
+        Session3
+    ),
+    [NextReq | _] = Outs2,
+    ?assertMatch({1, _, _}, maps:get(block1, NextReq#coap_message.options)),
+    expect_no_publish().
+
+case139_block2_publish_once(_Config) ->
+    WithContext = capture_with_context(self()),
+    Session0 = emqx_lwm2m_session:new(),
+    Session1 = setelement(7, Session0, #{<<"alternatePath">> => <<"/">>}),
+    Cmd = #{
+        <<"msgType">> => <<"write">>,
+        <<"requestID">> => 2001,
+        <<"data">> => #{
+            <<"path">> => <<"/3/0/1">>,
+            <<"type">> => <<"String">>,
+            <<"value">> => <<"v">>
+        }
+    },
+    #{return := {Outs1, Session2}} = emqx_lwm2m_session:send_cmd(Cmd, WithContext, Session1),
+    [Req1 | _] = Outs1,
+    flush_publish_msgs(),
+
+    Resp0 = #coap_message{
+        type = ack,
+        method = {ok, content},
+        token = Req1#coap_message.token,
+        payload = <<"part-a">>,
+        options = #{block2 => {0, true, 16}}
+    },
+    #{return := {Outs2, Session3}} = emqx_lwm2m_session:handle_protocol_in(
+        {response, {Cmd, Resp0}},
+        WithContext,
+        Session2
+    ),
+    [Req2 | _] = Outs2,
+    ?assertEqual({1, false, 16}, maps:get(block2, Req2#coap_message.options)),
+    expect_no_publish(),
+
+    Resp1 = Resp0#coap_message{payload = <<"part-b">>, options = #{block2 => {1, false, 16}}},
+    _ = emqx_lwm2m_session:handle_protocol_in(
+        {response, {Cmd, Resp1}},
+        WithContext,
+        Session3
+    ),
+    Payload = wait_publish_payload(),
+    ?assertEqual(<<"write">>, maps:get(<<"msgType">>, Payload)),
+    expect_no_publish().
+
+case140_block2_auto_tx_response(_Config) ->
+    OldBlockwise = emqx:get_config([gateway, lwm2m, blockwise], #{}),
+    ok = meck:new(emqx_lwm2m_session, [passthrough]),
+    ok = meck:expect(
+        emqx_lwm2m_session,
+        update,
+        fun(Msg, _WithContext, _Session) ->
+            case emqx_coap_message:get_option(block2, Msg, undefined) of
+                undefined ->
+                    Payload = binary:copy(<<"Z">>, 40),
+                    Reply = emqx_coap_message:piggyback({ok, content}, Payload, Msg),
+                    #{reply => Reply};
+                _ ->
+                    erlang:error(unexpected_followup_handler_call)
+            end
+        end
+    ),
+    try
+        ok = emqx_config:put(
+            [gateway, lwm2m, blockwise],
+            maps:merge(OldBlockwise, #{auto_tx_block2 => true, max_block_size => 16})
+        ),
+        CmPid = whereis(emqx_gateway_lwm2m_cm),
+        ?assert(is_pid(CmPid)),
+        Ctx = #{gwname => lwm2m, cm => CmPid},
+        ConnInfo = #{
+            peername => {{127, 0, 0, 1}, 56830},
+            sockname => {{127, 0, 0, 1}, 56830}
+        },
+        Channel0 = emqx_lwm2m_channel:init(ConnInfo, #{ctx => Ctx}),
+        Session0 = element(5, Channel0),
+        Location = [<<"rd">>, <<"ep140">>],
+        Session1 = setelement(6, Session0, Location),
+        Channel1 = setelement(5, Channel0, Session1),
+        Req0 = #coap_message{
+            type = con,
+            method = post,
+            id = 900,
+            token = <<"b2tok">>,
+            options = #{uri_path => Location, uri_query => #{}}
+        },
+        {ok, [{outgoing, [Reply0]}], Channel2} = emqx_lwm2m_channel:handle_in(Req0, Channel1),
+        ?assertEqual({0, true, 16}, emqx_coap_message:get_option(block2, Reply0, undefined)),
+        Req1 = Req0#coap_message{
+            id = 901,
+            options = #{uri_path => Location, block2 => {1, false, 16}}
+        },
+        {ok, [{outgoing, [Reply1]}], Channel3} = emqx_lwm2m_channel:handle_in(Req1, Channel2),
+        ?assertEqual({1, true, 16}, emqx_coap_message:get_option(block2, Reply1, undefined)),
+        Req2 = Req0#coap_message{
+            id = 902,
+            options = #{uri_path => Location, block2 => {2, false, 16}}
+        },
+        {ok, [{outgoing, [Reply2]}], _Channel4} = emqx_lwm2m_channel:handle_in(Req2, Channel3),
+        ?assertEqual({2, false, 16}, emqx_coap_message:get_option(block2, Reply2, undefined))
+    after
+        ok = meck:unload(emqx_lwm2m_session),
+        ok = emqx_config:put([gateway, lwm2m, blockwise], OldBlockwise)
+    end.
+
+capture_with_context(Pid) ->
+    fun
+        (publish, [_Topic, Msg]) ->
+            Pid ! {publish, Msg},
+            ok;
+        (subscribe, [_Topic, _Opts]) ->
+            ok;
+        (metrics, _Name) ->
+            ok;
+        (_, _) ->
+            ok
+    end.
+
+wait_publish_payload() ->
+    receive
+        {publish, #message{payload = Payload}} ->
+            emqx_utils_json:decode(Payload)
+    after 1000 ->
+        error(timeout_wait_publish)
+    end.
+
+expect_no_publish() ->
+    receive
+        {publish, Msg} ->
+            error({unexpected_publish, Msg})
+    after 100 ->
+        ok
+    end.
+
+flush_publish_msgs() ->
+    receive
+        {publish, _Msg} ->
+            flush_publish_msgs()
+    after 0 ->
+        ok
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Internal Functions
