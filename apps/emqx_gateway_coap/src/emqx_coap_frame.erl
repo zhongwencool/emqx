@@ -226,9 +226,11 @@ encode_block1(Num, M, SizEx) when Num < 4096 -> <<Num:12, M:1, SizEx:3>>;
 encode_block1(Num, M, SizEx) -> <<Num:28, M:1, SizEx:3>>.
 
 is_valid_block_size(Size) when is_integer(Size) ->
-    Size >= 16 andalso Size =< 1024 andalso (Size band (Size - 1)) =:= 0;
+    MaxSize = ?MAX_BLOCK_SIZE,
+    Size >= 16 andalso Size =< MaxSize andalso (Size band (Size - 1)) =:= 0;
 is_valid_block_size(_) ->
     false.
+
 content_format_to_code(<<"text/plain">>) -> 0;
 content_format_to_code(<<"application/link-format">>) -> 40;
 content_format_to_code(<<"application/xml">>) -> 41;
