@@ -131,7 +131,9 @@ defmodule EMQXUmbrella.MixProject do
       common_dep(:crc32cer),
       # transitive dependency of pulsar-client-erl, and direct dep in s3tables bridge
       common_dep(:murmerl3),
-      common_dep(:unicode_util_compat)
+      common_dep(:unicode_util_compat),
+      # Used by :sbom, remove after https://github.com/erlef/mix_sbom/pull/84 or similar is merged & released
+      {:optimus, "~> 0.6.1", override: true}
     ]
   end
 
@@ -242,7 +244,7 @@ defmodule EMQXUmbrella.MixProject do
     do: {:erlang_qq, github: "k32/erlang_qq", tag: "1.0.0", override: true}
 
   def common_dep(:rocksdb),
-    do: {:rocksdb, github: "emqx/erlang-rocksdb", tag: "9.10.0-emqx-1", override: true}
+    do: {:rocksdb, github: "emqx/erlang-rocksdb", tag: "9.10.0-emqx-2", override: true}
 
   def common_dep(:emqx_http_lib),
     do: {:emqx_http_lib, github: "emqx/emqx_http_lib", tag: "0.5.3", override: true}
@@ -311,7 +313,7 @@ defmodule EMQXUmbrella.MixProject do
     do: {:greptimedb, github: "emqx/greptimedb-ingester-erl", tag: "v0.2.3-emqx.1"}
 
   def common_dep(:greptimedb_rs),
-    do: {:greptimedb_rs, github: "emqx/greptimedb-ingester-erlnif", tag: "0.1.2"}
+    do: {:greptimedb_rs, github: "emqx/greptimedb-ingester-erlnif", tag: "0.1.7"}
 
   def common_dep(:sbom), do: {:sbom, "~> 0.8", runtime: false}
 
